@@ -1,0 +1,74 @@
+﻿Type,Function,"VOLUME - 4 CREW
+(m3)","VOLUME - 6 CREW
+(m3)",increase in 2 crew (m^3),min width (m),min depth (m),min height (m),Type criticality,Function criticality
+Exercise,Aerobic Exercise (cycle ergometer),3.38,6.76,3.38,0.65,0.69,,,1
+,Aerobic Exercise (treadmill),6.12,12.24,6.12,,,1.91,,1
+,Resistive Exercise,3.92,11.76,7.84,,,1.91,,1
+,Bone Loading,4.91,9.82,4.91,0.65,0.69,,,
+,Sensorimotor Conditioning,4.91,9.82,4.91,0.65,0.69,,,
+Group Socialization & Recreation,Athletic Games,18.2,27.3,9.10,,1.95,,,1
+,Personal Recreation,1.2,1.2,0.00,0.91,0.66,2.00,,
+,Tabletop games & artistic/creative recreation,10.09,15.14,5.05,1.91,1.91,1.49,,1
+,Video/movie viewing,4.8,7.2,2.40,2.61,,1.49,,
+,Window viewing,4.62,4.62,0.00,0.65,,,,
+Human Waste Collection,Hand cleaning,2.69,5.38,2.69,0.65,0.54,,1,1
+,Liquid waste collection,2.36,4.72,2.36,0.65,,1.49,,
+,Solid waste collection,2.36,4.72,2.36,0.65,,1.49,,1
+Hygiene,Changing room,2.18,4.36,2.18,0.93,,2.00,1,
+,Facial cleaning,2.69,5.38,2.69,0.65,0.54,,,
+,Finger/toenail clipping,2.34,4.68,2.34,0.65,,,,
+,Full body cleaning,4.34,8.68,4.34,1.21,1.43,2.51,,
+,Hair styling/grooming,2.34,4.68,2.34,0.65,0.54,,,
+,Hand cleaning,2.69,5.38,2.69,0.65,0.54,,,
+,Oral hygiene,2.34,4.68,2.34,,0.98,,,
+,Cleansing work space,4.35,8.7,4.35,,,1.91,,1
+,Viewing appearance,1.8,3.6,1.80,0.91,0.99,2.00,,
+,Shaving,2.34,4.68,2.34,,0.98,,,
+,Skin care,2.34,4.68,2.34,,0.98,,,1
+Logistics,Physical work surface access,4.35,4.35,0.00,2.02,0.98,1.91,,1
+,Small item containment,1.20,1.20,0.00,0.65,0.54,1.91,,
+,Temporary stowage,6.00,6.00,0.00,0.98,2.02,2.31,,1
+Maintenance & Repair,Computer display and control interface,1.70,3.40,1.70,0.65,,1.91,,1
+,Equipment Diagnostics,4.35,4.35,0.00,,,1.91,,
+,Physical work surface access,4.35,4.35,0.00,,,1.91,,1
+,Soft goods fabrication,2.69,2.69,0.00,0.65,,,,
+EVA Support,Suit Component Testing,4.82,4.82,0.00,,,2.31,,1
+,Computer Display and Control Interface,1.70,1.70,0.00,0.65,,,,1
+Meal Consumption,Full Crew Dining,10.09,15.14,5.05,1.19,1.19,1.91,,1
+Meal Preparation,Food Item Sorting,3.30,3.30,0.00,1.41,1.41,,,
+,Food Preparation,4.35,4.35,0.00,,,1.91,,1
+,Utensil and food equipment hygiene,3.30,3.30,0.00,1.41,1.41,,,1
+Medical Operations,Advanced Medical Care,5.80,5.80,0.00,2.00,1.45,2.00,,
+,Ambulatory care,1.70,1.70,0.00,,,1.49,,
+,Basic Medical Care,5.80,5.80,0.00,2.00,1.45,2.00,,
+,Computer data entry / manipulation,1.20,1.20,0.00,0.65,,1.49,,1
+,Dental care,5.80,5.80,0.00,2.00,1.45,2.00,,1
+,Private telemedicine,1.20,1.20,0.00,0.65,,1.49,,
+,Two person meetings,3.40,3.40,0.00,,,1.49,,1
+Mission Planning,Command and control interface,3.42,3.42,0.00,,,1.91,,1
+,Physical work surface access,10.09,15.14,5.05,1.19,1.19,1.91,,1
+,Team Meetings,4.80,7.20,2.40,2.61,,1.49,,
+,Mission Training,18.20,27.30,9.10,,1.95,,,1
+Private Habitation,Changing clothes,8.72,13.08,4.36,0.93,,2.00,1,
+,Meditation,4.80,7.20,2.40,0.65,,,,
+,Non-sleep rest/relaxation in private quarters,4.80,7.20,2.40,0.65,,,,
+,Physical work surface access,17.40,26.10,8.70,,,1.91,,1
+,"Single person private work, entertainment, and comm.",4.80,7.20,2.40,0.65,,,,
+,Sleep accommodation,10.76,16.14,5.38,0.65,,,,1
+,Stretching,13.96,20.94,6.98,0.65,,,,
+,Two person meetings,13.60,20.40,6.80,,,1.49,,
+,Viewing appearance in private quarters,7.20,10.80,3.60,0.91,0.99,2.00,,
+"Habitat Monitoring and
+Commanding",Command and Control,3.42,3.42,0.00,,,1.91,1,1
+,Teleoperation and Crew Communication,1.70,1.70,0.00,0.65,1.49,,,
+Waste Management,Trash Containment,2.55,2.55,0.00,0.65,,,1,
+,Trash Packing for Disposal,3.76,3.76,0.00,0.65,,,,1
+Airlock ,Depressurization,4.51,4.51,0.00,1.30,,1.91,1,
+,Repressurization,4.51,4.51,0.00,1.30,,1.91,,
+,Hyperbaric Isolation,4.51,4.51,0.00,1.30,,1.91,,
+,Hypobaric Isolation,4.51,4.51,0.00,1.30,,1.91,,
+,EVA Suit Don/Doffing,6.35,6.35,0.00,,,2.31,,1
+,Crew Ingress/Egress,4.64,4.64,0.00,1.30,,1.91,,
+,Subsystem or Payload Ingress/Egress,4.64,4.64,0.00,1.30,,1.91,,
+,Suit servicing,4.82,4.82,0.00,1.18,2.05,2.00,,1
+Safe Haven,Safe haven,10.76,16.14,5.38,1.30,1.98,1.91,2,1

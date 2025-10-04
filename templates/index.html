@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Habitat Layout Designer</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <header>
+    <h1>🚀 Habitat Layout Designer</h1>
+    <nav class="main-nav">
+      <a class="nav-link active" href="/">Designer</a>
+      <a class="nav-link" href="/stacked">Cross-Section View</a>
+      <a class="nav-link" href="/design_library">Design Library</a>
+    </nav>
+  </header>
+
+  <main class="dashboard">
+    <section class="dashboard__column dashboard__column--primary">
+      <div class="card card--forms">
+        <div class="style-switch">
+          <label for="renderStyle">Module Style
+            <select id="renderStyle">
+              <option value="realistic">Realistic</option>
+              <option value="clay">Clay</option>
+            </select>
+          </label>
+        </div>
+        <div class="crew-settings">
+          <label>Crew Size
+            <input id="crewSize" type="number" min="2" max="8" step="1" value="4">
+          </label>
+          <label>Mission Focus
+            <textarea id="missionPrompt" rows="2" placeholder="List mission priorities to guarantee critical coverage."></textarea>
+          </label>
+          <button type="button" id="enforceRequirementsBtn">Ensure Critical Modules</button>
+        </div>
+        <nav class="card-tabs" role="tablist">
+          <button class="card-tabs__tab is-active" type="button" data-tab-target="habitat-tab" aria-controls="habitat-tab" aria-selected="true">Habitat</button>
+          <button class="card-tabs__tab" type="button" data-tab-target="module-tab" aria-controls="module-tab" aria-selected="false">Module</button>
+        </nav>
+        <div class="card-tabs__panels">
+          <div id="habitat-tab" class="card-tabs__panel is-active" role="tabpanel">
+            <form id="habitatForm" class="stacked-form">
+              <label>Shape
+                <select id="habitatShape">
+                  <option value="cylinder">Cylinder</option>
+                  <option value="sphere">Sphere</option>
+                  <option value="cube">Cube</option>
+                </select>
+              </label>
+              <div id="shapeFields" class="shape-fields"></div>
+              <button type="submit">Update Habitat</button>
+            </form>
+          </div>
+          <div id="module-tab" class="card-tabs__panel" role="tabpanel">
+            <form id="moduleForm" class="stacked-form">
+              <label>ID <input type="text" id="id" required></label>
+              <div class="form-grid">
+                <label>Type 
+                  <select id="type">
+                    <option>sleep</option>
+                    <option>storage</option>
+                    <option>galley</option>
+                    <option>medbay</option>
+                    <option>exercise</option>
+                    <option>life_support</option>
+                    <option>power</option>
+                    <option>comms</option>
+                    <option>waste</option>
+                  </select>
+                </label>
+                <label>Shape 
+                  <select id="shape">
+                    <option>box</option>
+                    <option>sphere</option>
+                    <option>cylinder</option>
+                    <option>capsule</option>
+                  </select>
+                </label>
+                <label>Color 
+                  <select id="color">
+                    <option>green</option>
+                    <option>orange</option>
+                    <option>teal</option>
+                    <option>purple</option>
+                    <option>grey</option>
+                    <option>blue</option>
+                    <option>red</option>
+                    <option>yellow</option>
+                  </select>
+                </label>
+                <label>Visual preset
+                  <select id="assetPreset">
+                    <option value="">Basic shape</option>
+                  </select>
+                </label>
+              </div>
+              <div class="form-grid form-grid--coords">
+                <label>X <input type="number" id="x" step="0.1"></label>
+                <label>Y <input type="number" id="y" step="0.1"></label>
+                <label>Z <input type="number" id="z" step="0.1"></label>
+                <label>Width (w) <input type="number" id="w" step="0.1"></label>
+                <label>Height (h) <input type="number" id="h" step="0.1"></label>
+                <label>Depth (d) <input type="number" id="d" step="0.1"></label>
+              </div>
+              <button type="submit">Add Module</button>
+            </form>
+          </div>
+        </div>
+      </div>
+
+      <div class="card card--library">
+        <header class="card__header">
+          <h2>Module Library</h2>
+          <p>Drop in ready-made prefabs or start from templates.</p>
+        </header>
+        <div id="moduleLibrary" class="module-library"></div>
+      </div>
+
+      <div class="card card--modules">
+        <header class="card__header">
+          <h2>Modules</h2>
+          <p class="card__subtext">Manage, duplicate, or edit modules directly from the grid.</p>
+        </header>
+        <div class="modules-table">
+          <table id="moduleTable">
+            <thead>
+              <tr><th>ID</th><th>Type</th><th>Function</th><th>Shape</th><th>Visual</th><th>Pos</th><th>Size</th><th>Color</th><th>Actions</th></tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section class="dashboard__column dashboard__column--secondary">
+      <div class="card card--snapshot">
+        <header class="card__header">
+          <h2>Snapshot</h2>
+          <div class="card__actions">
+            <button onclick="simulate()">🔄 Simulate</button>
+            <button type="button" id="optimizeLayoutBtn">🧩 Optimize</button>
+          </div>
+        </header>
+        <div class="snapshot-frame">
+          <img id="snapshot" src="/snapshot?nocache=0" alt="Habitat snapshot">
+        </div>
+      </div>
+
+      <div class="card card--insight">
+        <div class="insight-grid">
+          <div class="insight-grid__map">
+            <h2>Layout Map</h2>
+            <canvas id="layoutCanvas" width="480" height="360"></canvas>
+          </div>
+          <div class="insight-grid__metrics">
+            <h2>Metrics</h2>
+            <div id="requirementsSummary" class="requirements-summary" aria-live="polite"></div>
+            <div class="metrics-grid">
+              <div class="metrics-grid__panel">
+                <canvas id="metricsVolumeChart" height="160"></canvas>
+              </div>
+              <div class="metrics-grid__panel">
+                <canvas id="metricsUsageChart" height="160"></canvas>
+              </div>
+              <div class="metrics-grid__panel metrics-grid__panel--footprint">
+                <canvas id="metricsFootprintChart" height="160"></canvas>
+              </div>
+            </div>
+            <pre id="metrics" class="metrics-output"></pre>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+  <aside class="ai-widget" aria-live="polite">
+    <button type="button" id="aiWidgetToggle" class="ai-widget__toggle" aria-expanded="false" aria-controls="aiWidgetPanel">
+      <img src="{{ url_for('static', filename='images/grommit.png') }}" alt="Grommit, your habitat AI buddy" class="ai-widget__avatar">
+      <span class="ai-widget__label">Need module ideas?</span>
+    </button>
+    <section id="aiWidgetPanel" class="ai-widget__panel" aria-hidden="true">
+      <header class="ai-widget__header">
+        <h2>Grommit Module Generator</h2>
+        <p>Describe what you need and Grommit will sketch out new modules.</p>
+      </header>
+      <form id="aiForm" class="ai-widget__form">
+        <label class="ai-widget__prompt-label" for="aiPrompt">Ask Grommit</label>
+        <textarea id="aiPrompt" placeholder="Build a quiet sleep pod near the exercise zone" rows="3"></textarea>
+        <div class="ai-widget__actions">
+          <button type="submit">Generate Modules</button>
+          <button type="button" id="aiWidgetClose" class="ai-widget__close">Close</button>
+        </div>
+      </form>
+    </section>
+  </aside>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" integrity="sha384-H4vGU+mLjxJv7CIdivgUqVRJN6HsVbquL6Hcg6XMBTCj9Pm+qm6KhxzHyfL9zsN3" crossorigin="anonymous"></script>
+  <script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>

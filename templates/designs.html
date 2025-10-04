@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Habitat Design Library</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='designs.css') }}">
+</head>
+<body class="design-library">
+  <header>
+    <h1>🌕 Habitat Design Library</h1>
+    <nav class="main-nav">
+      <a class="nav-link" href="/">Designer</a>
+      <a class="nav-link" href="/stacked">Cross-Section View</a>
+      <a class="nav-link active" href="/design_library">Design Library</a>
+    </nav>
+  </header>
+
+  <main class="design-content">
+    <section class="auto-designer">
+      <h2>Autonomous Layout Designer</h2>
+      <form id="autoDesignForm" class="auto-form">
+        <label>Crew Size
+          <input type="number" id="autoCrew" min="2" max="4" value="4">
+        </label>
+        <label>Mission Duration (days)
+          <input type="number" id="autoDuration" min="30" max="180" value="90">
+        </label>
+        <label>Habitat Type
+          <select id="autoHabType">
+            <option value="Inflatable">Inflatable</option>
+            <option value="Rigid">Rigid</option>
+            <option value="RegolithHybrid">RegolithHybrid</option>
+          </select>
+        </label>
+        <label>Pressurized Volume (m³)
+          <input type="number" id="autoVolume" min="120" max="400" value="160" step="5">
+        </label>
+        <label>Target ISRU Ratio
+          <input type="number" id="autoIsru" min="0" max="1" step="0.05" value="0.6">
+        </label>
+        <label>Docking Ports
+          <input type="number" id="autoPorts" min="1" max="4" value="2">
+        </label>
+        <label>Seed
+          <input type="number" id="autoSeed" value="42">
+        </label>
+        <label>Mission Priorities
+          <textarea id="autoPrompt" rows="3" placeholder="e.g. Include dental care and safe haven for emergencies."></textarea>
+        </label>
+        <div class="auto-actions">
+          <button type="button" id="autoGenerateBtn">Generate</button>
+          <button type="button" id="autoOptimizeBtn">Optimize</button>
+          <button type="button" id="autoValidateBtn">Validate</button>
+          <button type="button" id="autoScoreBtn">Score</button>
+          <button type="button" id="autoExportBtn">Export MD</button>
+          <button type="button" id="autoLoadDesignerBtn">Load Into Designer</button>
+        </div>
+      </form>
+      <div id="autoDesignStatus" class="auto-status">No automated layout yet.</div>
+    </section>
+
+    <section class="design-intro">
+      <p class="lead">Explore reference layouts engineered for 2–4 crew over 30–180 days. Each concept respects NASA/CSA habitat standards, optimizes crew flow, and embeds redundancy for autonomous operations.</p>
+      <button id="refreshDesigns" type="button">🔄 Refresh Designs</button>
+    </section>
+
+    <section id="designList" class="design-list">
+      <div class="design-placeholder">Loading design catalog…</div>
+    </section>
+
+    <section class="design-help">
+      <h2>How to use</h2>
+      <ol>
+        <li>Select a habitat concept to review systems, zoning, and metrics.</li>
+        <li>Apply the layout to open it directly in the Designer workspace.</li>
+        <li>Simulate to capture a snapshot or inspect the stacked cross-section.</li>
+      </ol>
+    </section>
+  </main>
+
+  <template id="designCardTemplate">
+    <article class="design-card">
+      <div class="card-header">
+        <h2 class="design-title"></h2>
+        <span class="design-meta"></span>
+      </div>
+      <p class="design-summary"></p>
+      <ul class="design-focus"></ul>
+      <div class="design-metrics"></div>
+      <div class="card-actions">
+        <button class="btn-apply" type="button">Apply in Designer</button>
+        <button class="btn-apply-cross" type="button">Apply &amp; View Cross-Section</button>
+      </div>
+      <div class="card-status" role="status"></div>
+    </article>
+  </template>
+
+  <script src="{{ url_for('static', filename='designs.js') }}" defer></script>
+</body>
+</html>

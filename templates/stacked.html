@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Habitat Cross-Section Viewer</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='stacked.css') }}">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link
+    href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;600;700&family=Source+Sans+3:wght@400;600&display=swap"
+    rel="stylesheet">
+</head>
+<body>
+  <header class="topbar">
+    <div class="branding">
+      <h1>Habitat Cross-Section</h1>
+      <p class="subtitle">Open view of stacked habitat levels and modules</p>
+    </div>
+    <nav class="actions">
+      <a class="nav-link" href="/">Layout Designer</a>
+      <a class="nav-link active" href="/stacked">Cross-Section View</a>
+      <a class="nav-link" href="/design_library">Design Library</a>
+    </nav>
+  </header>
+
+  <main class="content">
+    <aside class="habitat-summary">
+      <h2>Habitat Summary</h2>
+      <dl>
+        <div class="row"><dt>Shape</dt><dd id="hab-shape">—</dd></div>
+        <div class="row"><dt>Vertical span</dt><dd id="hab-height">—</dd></div>
+        <div class="row"><dt>Footprint</dt><dd id="hab-footprint">—</dd></div>
+        <div class="row"><dt>Module count</dt><dd id="hab-modules">—</dd></div>
+      </dl>
+      <button id="refreshBtn" type="button">Refresh Layout</button>
+      <p class="note">Data sourced from the active layout configuration.</p>
+    </aside>
+
+    <section class="levels" id="levels">
+      <div class="placeholder">
+        <p>Loading habitat layout…</p>
+      </div>
+    </section>
+  </main>
+
+  <script src="{{ url_for('static', filename='stacked.js') }}" defer></script>
+</body>
+</html>
