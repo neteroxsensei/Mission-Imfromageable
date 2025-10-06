@@ -2,163 +2,239 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Habitat Layout Designer</title>
+  <link rel="icon" type="image/png" href="{{ url_for('static', filename='images/grommit.png') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
-  <header>
-    <h1>🚀 Habitat Layout Designer</h1>
-    <nav class="main-nav">
-      <a class="nav-link active" href="/">Designer</a>
-      <a class="nav-link" href="/stacked">Cross-Section View</a>
-      <a class="nav-link" href="/design_library">Design Library</a>
-    </nav>
+  <header class="site-header">
+    <div class="site-header__inner">
+      <div class="site-header__brand">
+        <h1>🚀 Habitat Layout Designer</h1>
+        <p class="site-header__tagline">Design, validate, and optimize a mission-ready habitat faster than launch prep.</p>
+      </div>
+      <nav class="main-nav" aria-label="Primary">
+        <a class="nav-link active" href="/">Designer</a>
+        <a class="nav-link" href="/stacked">Cross-Section View</a>
+        <a class="nav-link" href="/design_library">Design Library</a>
+      </nav>
+    </div>
+    <ul class="site-header__steps" aria-label="Quick instructions">
+      <li class="site-header__step">
+        <span class="site-header__step-label">1</span>
+        <span>Frame your habitat shell</span>
+      </li>
+      <li class="site-header__step">
+        <span class="site-header__step-label">2</span>
+        <span>Drop in mission-critical modules</span>
+      </li>
+      <li class="site-header__step">
+        <span class="site-header__step-label">3</span>
+        <span>Simulate &amp; optimize to validate coverage</span>
+      </li>
+    </ul>
   </header>
+
+  <section id="appStatus" class="app-status" role="status" aria-live="polite"></section>
 
   <main class="dashboard">
     <section class="dashboard__column dashboard__column--primary">
-      <div class="card card--forms">
-        <div class="style-switch">
-          <label for="renderStyle">Module Style
+      <article class="card card--forms" aria-labelledby="mission-settings-heading">
+        <header class="card__header card__header--split">
+          <div>
+            <h2 id="mission-settings-heading">Mission Blueprint</h2>
+            <p class="card__subtitle">Set crew context and pick a rendering style before shaping the shell.</p>
+          </div>
+          <label class="style-switch" for="renderStyle">
+            <span class="style-switch__label">Module Style</span>
             <select id="renderStyle">
               <option value="realistic">Realistic</option>
               <option value="clay">Clay</option>
             </select>
           </label>
-        </div>
-        <div class="crew-settings">
-          <label>Crew Size
-            <input id="crewSize" type="number" min="2" max="8" step="1" value="4">
-          </label>
-          <label>Mission Focus
-            <textarea id="missionPrompt" rows="2" placeholder="List mission priorities to guarantee critical coverage."></textarea>
-          </label>
-          <button type="button" id="enforceRequirementsBtn">Ensure Critical Modules</button>
-        </div>
-        <nav class="card-tabs" role="tablist">
-          <button class="card-tabs__tab is-active" type="button" data-tab-target="habitat-tab" aria-controls="habitat-tab" aria-selected="true">Habitat</button>
-          <button class="card-tabs__tab" type="button" data-tab-target="module-tab" aria-controls="module-tab" aria-selected="false">Module</button>
-        </nav>
-        <div class="card-tabs__panels">
-          <div id="habitat-tab" class="card-tabs__panel is-active" role="tabpanel">
-            <form id="habitatForm" class="stacked-form">
-              <label>Shape
-                <select id="habitatShape">
-                  <option value="cylinder">Cylinder</option>
-                  <option value="sphere">Sphere</option>
-                  <option value="cube">Cube</option>
-                </select>
-              </label>
-              <div id="shapeFields" class="shape-fields"></div>
-              <button type="submit">Update Habitat</button>
-            </form>
-          </div>
-          <div id="module-tab" class="card-tabs__panel" role="tabpanel">
-            <form id="moduleForm" class="stacked-form">
-              <label>ID <input type="text" id="id" required></label>
-              <div class="form-grid">
-                <label>Type 
-                  <select id="type">
-                    <option>sleep</option>
-                    <option>storage</option>
-                    <option>galley</option>
-                    <option>medbay</option>
-                    <option>exercise</option>
-                    <option>life_support</option>
-                    <option>power</option>
-                    <option>comms</option>
-                    <option>waste</option>
-                  </select>
-                </label>
-                <label>Shape 
-                  <select id="shape">
-                    <option>box</option>
-                    <option>sphere</option>
-                    <option>cylinder</option>
-                    <option>capsule</option>
-                  </select>
-                </label>
-                <label>Color 
-                  <select id="color">
-                    <option>green</option>
-                    <option>orange</option>
-                    <option>teal</option>
-                    <option>purple</option>
-                    <option>grey</option>
-                    <option>blue</option>
-                    <option>red</option>
-                    <option>yellow</option>
-                  </select>
-                </label>
-                <label>Visual preset
-                  <select id="assetPreset">
-                    <option value="">Basic shape</option>
-                  </select>
-                </label>
-              </div>
-              <div class="form-grid form-grid--coords">
-                <label>X <input type="number" id="x" step="0.1"></label>
-                <label>Y <input type="number" id="y" step="0.1"></label>
-                <label>Z <input type="number" id="z" step="0.1"></label>
-                <label>Width (w) <input type="number" id="w" step="0.1"></label>
-                <label>Height (h) <input type="number" id="h" step="0.1"></label>
-                <label>Depth (d) <input type="number" id="d" step="0.1"></label>
-              </div>
-              <button type="submit">Add Module</button>
-            </form>
-          </div>
-        </div>
-      </div>
-
-      <div class="card card--library">
-        <header class="card__header">
-          <h2>Module Library</h2>
-          <p>Drop in ready-made prefabs or start from templates.</p>
         </header>
-        <div id="moduleLibrary" class="module-library"></div>
-      </div>
-
-      <div class="card card--modules">
-        <header class="card__header">
-          <h2>Modules</h2>
-          <p class="card__subtext">Manage, duplicate, or edit modules directly from the grid.</p>
-        </header>
-        <div class="modules-table">
-          <table id="moduleTable">
-            <thead>
-              <tr><th>ID</th><th>Type</th><th>Function</th><th>Shape</th><th>Visual</th><th>Pos</th><th>Size</th><th>Color</th><th>Actions</th></tr>
-            </thead>
-            <tbody></tbody>
-          </table>
+        <div class="card__body">
+          <div class="crew-settings" aria-label="Crew configuration">
+            <label class="crew-settings__field">Crew Size
+              <input id="crewSize" type="number" min="2" max="8" step="1" value="4">
+            </label>
+            <label class="crew-settings__field">Mission Focus
+              <textarea id="missionPrompt" rows="2" placeholder="List mission priorities to guarantee critical coverage."></textarea>
+            </label>
+          </div>
+          <div class="card__divider" role="separator" aria-hidden="true"></div>
+          <div class="card-tabs" role="tablist" aria-label="Configure habitat or module">
+            <button class="card-tabs__tab is-active" type="button" data-tab-target="habitat-tab" aria-controls="habitat-tab" aria-selected="true">Habitat</button>
+            <button class="card-tabs__tab" type="button" data-tab-target="module-tab" aria-controls="module-tab" aria-selected="false">Module</button>
+          </div>
+          <div class="card-tabs__panels">
+            <section id="habitat-tab" class="card-tabs__panel is-active" role="tabpanel" aria-labelledby="habitat-tab">
+              <form id="habitatForm" class="stacked-form">
+                <fieldset>
+                  <legend class="sr-only">Habitat shell parameters</legend>
+                  <label>Shape
+                    <select id="habitatShape">
+                      <option value="cylinder">Cylinder</option>
+                      <option value="sphere">Sphere</option>
+                      <option value="cube">Cube</option>
+                    </select>
+                  </label>
+                  <div id="shapeFields" class="shape-fields"></div>
+                </fieldset>
+                <footer class="form-actions">
+                  <button type="submit" class="btn-primary">Update Habitat</button>
+                </footer>
+              </form>
+            </section>
+            <section id="module-tab" class="card-tabs__panel" role="tabpanel" aria-labelledby="module-tab">
+              <form id="moduleForm" class="stacked-form">
+                <fieldset>
+                  <legend class="sr-only">Custom module parameters</legend>
+                  <label>ID <input type="text" id="id" value="" readonly></label>
+                  <script>
+                    document.addEventListener('DOMContentLoaded', () => {
+                      fetch('/get-next-id')
+                        .then(response => response.json())
+                        .then(data => {
+                          document.getElementById('id').value = data.next_id;
+                        })
+                        .catch(error => console.error('Error fetching next ID:', error));
+                    });
+                  </script>
+                  <div class="form-grid">
+                    <label>Type
+                      <select id="type">
+                        <option>sleep</option>
+                        <option>storage</option>
+                        <option>galley</option>
+                        <option>medbay</option>
+                        <option>exercise</option>
+                        <option>life_support</option>
+                        <option>power</option>
+                        <option>comms</option>
+                        <option>waste</option>
+                      </select>
+                    </label>
+                    <label>Shape
+                      <select id="shape">
+                        <option>box</option>
+                        <option>sphere</option>
+                        <option>cylinder</option>
+                        <option>capsule</option>
+                      </select>
+                    </label>
+                    <label>Color
+                      <select id="color">
+                        <option>green</option>
+                        <option>orange</option>
+                        <option>teal</option>
+                        <option>purple</option>
+                        <option>grey</option>
+                        <option>blue</option>
+                        <option>red</option>
+                        <option>yellow</option>
+                      </select>
+                    </label>
+                    <label>Visual preset
+                      <select id="assetPreset">
+                        <option value="">Basic shape</option>
+                      </select>
+                    </label>
+                  </div>
+                  <div class="form-grid form-grid--coords" aria-label="Module placement">
+                    <label>X <input type="number" id="x" step="0.1"></label>
+                    <label>Y <input type="number" id="y" step="0.1"></label>
+                    <label>Z <input type="number" id="z" step="0.1"></label>
+                    <label>Width (w) <input type="number" id="w" step="0.1"></label>
+                    <label>Height (h) <input type="number" id="h" step="0.1"></label>
+                    <label>Depth (d) <input type="number" id="d" step="0.1"></label>
+                  </div>
+                </fieldset>
+                <footer class="form-actions">
+                  <button type="submit" class="btn-primary">Add Module</button>
+                </footer>
+              </form>
+            </section>
+          </div>
         </div>
-      </div>
+      </article>
+
+      <article class="card card--library" aria-labelledby="module-library-heading">
+        <header class="card__header card__header--split">
+          <div>
+            <h2 id="module-library-heading">Module Library</h2>
+            <p class="card__subtitle">Drop prefabs directly into your layout or tweak them on the right.</p>
+          </div>
+          <button type="button" id="enforceRequirementsBtn" class="btn-secondary">Ensure Critical Modules</button>
+        </header>
+        <div class="module-library__controls">
+          <label for="moduleLibrarySearch" class="sr-only">Search prefabs</label>
+          <input type="search" id="moduleLibrarySearch" placeholder="Search prefabs…" aria-label="Search module library">
+        </div>
+        <section id="moduleLibrary" class="module-library" aria-live="polite" aria-label="Prefab modules"></section>
+        <section class="modules-table" aria-label="Active module layout">
+          <header class="modules-table__header">
+            <div>
+              <h3>Active Layout</h3>
+              <p class="modules-table__helper">Every change runs auto-optimize &amp; simulate so metrics stay current.</p>
+            </div>
+            <dl class="modules-table__summary" id="moduleTableSummary" aria-label="Module summary"></dl>
+          </header>
+          <div class="modules-table__wrapper">
+            <table id="moduleTable">
+              <caption class="sr-only">List of modules currently in the habitat layout</caption>
+              <thead>
+                <tr>
+                  <th scope="col">ID</th>
+                  <th scope="col">Type</th>
+                  <th scope="col">Function</th>
+                  <th scope="col">Shape</th>
+                  <th scope="col">Visual</th>
+                  <th scope="col">Position</th>
+                  <th scope="col">Size</th>
+                  <th scope="col">Color</th>
+                  <th scope="col" class="modules-table__actions-head">Actions</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </section>
+      </article>
     </section>
 
     <section class="dashboard__column dashboard__column--secondary">
-      <div class="card card--snapshot">
-        <header class="card__header">
-          <h2>Snapshot</h2>
-          <div class="card__actions">
-            <button onclick="simulate()">🔄 Simulate</button>
-            <button type="button" id="optimizeLayoutBtn">🧩 Optimize</button>
+      <article class="card card--snapshot" aria-labelledby="snapshot-heading">
+        <header class="card__header card__header--split">
+          <div>
+            <h2 id="snapshot-heading">Snapshot</h2>
+            <p class="card__subtitle">Watch the 3D render refresh after each optimization cycle.</p>
+          </div>
+          <div class="card__toolbar">
+            <button type="button" class="btn-ghost" id="simulateBtn">🔄 Simulate</button>
+            <button type="button" class="btn-primary" id="optimizeLayoutBtn">🧩 Optimize</button>
           </div>
         </header>
         <div class="snapshot-frame">
           <img id="snapshot" src="/snapshot?nocache=0" alt="Habitat snapshot">
         </div>
-        <p class="card__helper" aria-live="polite">
-          The optimizer now clusters modules by type, prioritizes critical functions, and alerts you if any must be dropped.
-        </p>
-      </div>
+        <p class="card__helper" aria-live="polite">The optimizer clusters modules by type, keeps critical functions, and flags removals inline.</p>
+      </article>
 
-      <div class="card card--insight">
+      <article class="card card--insight card--map" aria-labelledby="layout-map-heading">
         <div class="insight-grid">
           <div class="insight-grid__map">
-            <h2>Layout Map</h2>
+            <h2 id="layout-map-heading">Layout Map</h2>
             <canvas id="layoutCanvas" width="480" height="360"></canvas>
           </div>
+        </div>
+      </article>
+
+      <article class="card card--insight card--metrics" aria-labelledby="metrics-heading">
+        <div class="insight-grid">
           <div class="insight-grid__metrics">
-            <h2>Metrics</h2>
+            <h2 id="metrics-heading">Metrics</h2>
             <div id="requirementsSummary" class="requirements-summary" aria-live="polite"></div>
             <div class="metrics-grid">
               <div class="metrics-grid__panel">
@@ -174,9 +250,10 @@
             <pre id="metrics" class="metrics-output"></pre>
           </div>
         </div>
-      </div>
+      </article>
     </section>
   </main>
+
   <aside class="ai-widget" aria-live="polite">
     <button type="button" id="aiWidgetToggle" class="ai-widget__toggle" aria-expanded="false" aria-controls="aiWidgetPanel">
       <img src="{{ url_for('static', filename='images/grommit.png') }}" alt="Grommit, your habitat AI buddy" class="ai-widget__avatar">
@@ -191,14 +268,50 @@
         <label class="ai-widget__prompt-label" for="aiPrompt">Ask Grommit</label>
         <textarea id="aiPrompt" placeholder="Build a quiet sleep pod near the exercise zone" rows="3"></textarea>
         <div class="ai-widget__actions">
-          <button type="submit">Generate Modules</button>
+          <button type="submit" class="btn-primary">Generate Modules</button>
           <button type="button" id="aiWidgetClose" class="ai-widget__close">Close</button>
         </div>
       </form>
     </section>
   </aside>
 
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" integrity="sha384-H4vGU+mLjxJv7CIdivgUqVRJN6HsVbquL6Hcg6XMBTCj9Pm+qm6KhxzHyfL9zsN3" crossorigin="anonymous"></script>
+  <div id="moduleRemovalOverlay" class="modal" aria-hidden="true">
+    <div class="modal__backdrop" role="presentation"></div>
+    <div class="modal__dialog" role="dialog" aria-modal="true" aria-labelledby="moduleRemovalTitle" aria-describedby="moduleRemovalMessage" tabindex="-1">
+      <header class="modal__header">
+        <h2 id="moduleRemovalTitle">Select Module to Remove</h2>
+        <p id="moduleRemovalMessage" class="modal__message">Some modules cannot fit inside the habitat. Select a module to remove and free up space.</p>
+      </header>
+      <div class="modal__body">
+        <ul id="moduleRemovalList" class="modal__list" role="list" aria-label="Modules available for removal"></ul>
+      </div>
+      <footer class="modal__footer">
+        <button type="button" id="moduleRemovalRemoveAll" class="btn-ghost">Remove All Overflow</button>
+        <div class="modal__footer-actions">
+          <button type="button" id="moduleRemovalCancel" class="btn-secondary">Cancel</button>
+          <button type="button" id="moduleRemovalConfirm" class="btn-primary" disabled>Remove Selected</button>
+        </div>
+      </footer>
+    </div>
+  </div>
+
+  <button id="reIdButton">Re-ID Modules</button>
+  <script>
+    document.getElementById('reIdButton').addEventListener('click', () => {
+      fetch('/re-id-modules', { method: 'POST' })
+        .then(response => {
+          if (response.ok) {
+            alert('Modules re-IDed successfully!');
+            location.reload(); // Refresh the page to reflect updated IDs
+          } else {
+            alert('Failed to re-ID modules.');
+          }
+        })
+        .catch(error => console.error('Error during re-ID:', error));
+    });
+  </script>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
   <script src="{{ url_for('static', filename='script.js') }}"></script>
 </body>
 </html>

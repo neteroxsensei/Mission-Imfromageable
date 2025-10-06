@@ -31,48 +31,23 @@ const COLOR_HEX = {
   yellow: '#facc15',
 };
 
-const STATIC_MODULE_LIBRARY = [
-  {
-    asset: 'crew_bed',
-    label: 'Crew Bed',
-    type: 'Private Habitation',
-    function: 'Sleep accommodation',
-    shape: 'box',
-    color: 'green',
-    size: { w: 2.2, d: 1.0, h: 1.1 },
-    defaultZ: 0.55,
-    description: 'Compact sleeping berth with integrated storage and headboard.',
-  },
-  {
-    asset: 'treadmill',
-    label: 'Treadmill',
-    type: 'Exercise',
-    function: 'Aerobic Exercise (treadmill)',
-    shape: 'box',
-    color: 'purple',
-    size: { w: 1.4, d: 2.0, h: 1.6 },
-    defaultZ: 0.8,
-    description: 'Microgravity tread deck with adjustable console and hand rails.',
-  },
-  {
-    asset: 'workbench',
-    label: 'Lab Workbench',
-    type: 'Maintenance & Repair',
-    function: 'Physical work surface access',
-    shape: 'box',
-    color: 'orange',
-    size: { w: 2.4, d: 1.2, h: 1.6 },
-    defaultZ: 0.8,
-    description: 'Multi-purpose fabrication bench with tool wall and storage shelf.',
-  },
-];
+const globalScope = typeof window !== 'undefined' ? window : globalThis;
+
+const STATIC_MODULE_LIBRARY = [];
+
+let assetLabels = globalScope.ASSET_LABELS || {};
+globalScope.ASSET_LABELS = assetLabels;
+globalScope.assetLabels = assetLabels;
 
 let moduleLibrary = [...STATIC_MODULE_LIBRARY];
-let assetLabels = {};
+globalScope.moduleLibrary = moduleLibrary;
 const moduleLibraryMap = new Map();
+let moduleLibraryQuery = '';
 
 function refreshLibraryCache() {
   assetLabels = {};
+  globalScope.ASSET_LABELS = assetLabels;
+  globalScope.assetLabels = assetLabels;
   moduleLibraryMap.clear();
   moduleLibrary.forEach((entry) => {
     if (!entry.asset) {
@@ -84,6 +59,42 @@ function refreshLibraryCache() {
 }
 
 refreshLibraryCache();
+
+function mergeLibraryEntries(entries) {
+  if (!Array.isArray(entries) || !entries.length) {
+    return [];
+  }
+  const newlyAdded = [];
+  entries.forEach((entry) => {
+    if (!entry || !entry.asset) {
+      return;
+    }
+    const assetKey = String(entry.asset);
+    if (moduleLibraryMap.has(assetKey)) {
+      return;
+    }
+    moduleLibrary.push(entry);
+    newlyAdded.push(entry);
+  });
+  if (newlyAdded.length) {
+    moduleLibrary.sort((a, b) => {
+      const typeA = String(a.type || '').toLowerCase();
+      const typeB = String(b.type || '').toLowerCase();
+      if (typeA !== typeB) {
+        return typeA.localeCompare(typeB);
+      }
+      return String(a.label || '').toLowerCase().localeCompare(String(b.label || '').toLowerCase());
+    });
+    refreshLibraryCache();
+    renderLibrary();
+    populateAssetPreset();
+  }
+  return newlyAdded;
+}
+
+if (globalScope && typeof globalScope === 'object') {
+  globalScope.mergeLibraryEntries = mergeLibraryEntries;
+}
 
 const DEFAULT_HABITAT = { type: 'cylinder', ...DEFAULTS_BY_SHAPE.cylinder };
 
@@ -111,10 +122,87 @@ let saveLayoutTimer = null;
 let requirementCatalogMap = null;
 let requirementCatalogPromise = null;
 let requirementTypeIndex = null;
+let stageCriticalTimer = null;
+let stageCriticalPromise = null;
+
+const statusContainer = document.getElementById('appStatus');
+const statusTimerMap = new WeakMap();
+let autoAnalysisTimer = null;
+let autoAnalysisPromise = null;
+let isOptimizing = false;
+
+const OVERFLOW_REASON_TEXT = {
+  'height-exceeds': 'Too tall for habitat clearance',
+  'footprint-exceeds': 'Exceeds habitat footprint width/depth',
+  'length-exceeds': 'Exceeds habitat length',
+  'cross-section-exceeds': 'Cross-section exceeds hull radius',
+  'volume-exceeds': 'Exceeds spherical volume',
+  'space-exhausted': 'No remaining floor area',
+  'invalid-dimensions': 'Module dimensions are invalid',
+  'invalid-habitat': 'Habitat dimensions are invalid',
+};
+
+const moduleRemovalOverlay = document.getElementById('moduleRemovalOverlay');
+const moduleRemovalDialog = moduleRemovalOverlay ? moduleRemovalOverlay.querySelector('.modal__dialog') : null;
+const moduleRemovalList = document.getElementById('moduleRemovalList');
+const moduleRemovalMessage = document.getElementById('moduleRemovalMessage');
+const moduleRemovalConfirm = document.getElementById('moduleRemovalConfirm');
+const moduleRemovalCancel = document.getElementById('moduleRemovalCancel');
+const moduleRemovalBackdrop = moduleRemovalOverlay ? moduleRemovalOverlay.querySelector('.modal__backdrop') : null;
+const moduleRemovalFocusSelectors = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
+const moduleRemovalRemoveAll = document.getElementById('moduleRemovalRemoveAll');
+const MODULE_REMOVAL_ALL = '__REMOVE_ALL__';
+let moduleRemovalResolver = null;
+let moduleRemovalFocusedBeforeOpen = null;
+let moduleRemovalSelectedId = null;
+let moduleRemovalKeyHandler = null;
 
 const crewInput = document.getElementById('crewSize');
 const missionPromptInput = document.getElementById('missionPrompt');
 const enforceRequirementsBtn = document.getElementById('enforceRequirementsBtn');
+
+function pushStatus(message, { tone = 'info', timeout = 5000 } = {}) {
+  if (!statusContainer || !message) {
+    return;
+  }
+
+  const toneClassMap = {
+    success: 'app-status__message--success',
+    warning: 'app-status__message--warning',
+    danger: 'app-status__message--danger',
+  };
+
+  const note = document.createElement('div');
+  note.className = 'app-status__message';
+  if (toneClassMap[tone]) {
+    note.classList.add(toneClassMap[tone]);
+  }
+  note.textContent = message;
+
+  statusContainer.appendChild(note);
+
+  while (statusContainer.children.length > 3) {
+    const first = statusContainer.firstElementChild;
+    if (!first) {
+      break;
+    }
+    if (statusTimerMap.has(first)) {
+      clearTimeout(statusTimerMap.get(first));
+      statusTimerMap.delete(first);
+    }
+    statusContainer.removeChild(first);
+  }
+
+  if (timeout > 0) {
+    const timer = setTimeout(() => {
+      if (note.parentNode === statusContainer) {
+        statusContainer.removeChild(note);
+      }
+      statusTimerMap.delete(note);
+    }, timeout);
+    statusTimerMap.set(note, timer);
+  }
+}
 
 function numberOr(value, fallback) {
   const num = Number.parseFloat(value);
@@ -368,7 +456,7 @@ function assetLabel(assetKey) {
     return '';
   }
   const key = String(assetKey);
-  return ASSET_LABELS[key] || key;
+  return assetLabels[key] || key;
 }
 
 function getHabitatFootprint() {
@@ -376,17 +464,35 @@ function getHabitatFootprint() {
   if (type === 'sphere') {
     const radius = numberOr(habitat.radius, DEFAULTS_BY_SHAPE.sphere.radius);
     const diameter = radius * 2;
-    return { width: diameter, depth: diameter };
-  }
-  if (type === 'cube') {
     return {
-      width: numberOr(habitat.width, DEFAULTS_BY_SHAPE.cube.width),
-      depth: numberOr(habitat.depth, DEFAULTS_BY_SHAPE.cube.depth),
+      type,
+      width: diameter,
+      depth: diameter,
+      height: diameter,
+      radius,
     };
   }
+  if (type === 'cube') {
+    const width = numberOr(habitat.width, DEFAULTS_BY_SHAPE.cube.width);
+    const depth = numberOr(habitat.depth, DEFAULTS_BY_SHAPE.cube.depth);
+    const height = numberOr(habitat.height, DEFAULTS_BY_SHAPE.cube.height);
+    return {
+      type,
+      width,
+      depth,
+      height,
+    };
+  }
+  const radius = numberOr(habitat.radius, DEFAULTS_BY_SHAPE.cylinder.radius);
+  const length = numberOr(habitat.length, DEFAULTS_BY_SHAPE.cylinder.length);
+  const diameter = radius * 2;
   return {
-    width: numberOr(habitat.radius, DEFAULTS_BY_SHAPE.cylinder.radius) * 2,
-    depth: numberOr(habitat.length, DEFAULTS_BY_SHAPE.cylinder.length),
+    type,
+    width: diameter,
+    depth: length,
+    height: diameter,
+    radius,
+    length,
   };
 }
 
@@ -434,6 +540,7 @@ async function loadLayout() {
     currentRequirements = null;
   } catch (err) {
     console.error('Failed to load layout', err);
+    pushStatus('Failed to load saved layout. Starting with defaults.', { tone: 'warning', timeout: 6000 });
     habitat = { ...DEFAULT_HABITAT };
     modules = [];
     renderStyle = 'realistic';
@@ -449,6 +556,7 @@ async function loadLayout() {
   updateRenderStyleControl();
   updateCrewControls();
   updateMetricsView(currentMetrics, currentRequirements);
+  scheduleAutoAnalysis('initial-load');
 }
 
 function renderHabitatForm() {
@@ -495,51 +603,161 @@ async function saveLayout() {
     if (!res.ok) {
       throw new Error(`Save failed (${res.status})`);
     }
+    queueCriticalModuleStaging();
   } catch (err) {
     console.error('Failed to save layout', err);
   }
 }
 
+function updateModuleSummary() {
+  const summary = document.getElementById('moduleTableSummary');
+  if (!summary) {
+    return;
+  }
+
+  summary.innerHTML = '';
+
+  const addItem = (label, value) => {
+    const item = document.createElement('div');
+    item.className = 'modules-table__summary-item';
+    const dt = document.createElement('dt');
+    dt.textContent = label;
+    const dd = document.createElement('dd');
+    dd.textContent = value;
+    item.append(dt, dd);
+    summary.appendChild(item);
+  };
+
+  if (!modules.length) {
+    addItem('Modules', '0');
+    addItem('Types', '—');
+    addItem('Functional', '—');
+    return;
+  }
+
+  const typeSet = new Set();
+  const colorSet = new Set();
+  let functionCount = 0;
+
+  modules.forEach((mod) => {
+    if (mod.type) {
+      typeSet.add(String(mod.type).toLowerCase());
+    }
+    if (mod.function) {
+      functionCount += 1;
+    }
+    if (mod.color) {
+      colorSet.add(String(mod.color).toLowerCase());
+    }
+  });
+
+  const functionPercent = Math.round((functionCount / modules.length) * 100);
+
+  addItem('Modules', String(modules.length));
+  addItem('Types', String(typeSet.size));
+  addItem('Functional', `${functionCount}/${modules.length} | ${Number.isFinite(functionPercent) ? `${functionPercent}%` : '—'}`);
+  if (colorSet.size) {
+    addItem('Palette', String(colorSet.size));
+  }
+}
+
 function renderTable() {
-  const tbody = document.querySelector('#moduleTable tbody');
+  const table = document.getElementById('moduleTable');
+  const tbody = table ? table.querySelector('tbody') : null;
   if (!tbody) {
     return;
   }
+
+  const headerLabels = table
+    ? Array.from(table.querySelectorAll('thead th')).map((th) => th.textContent.trim())
+    : [];
 
   tbody.innerHTML = '';
 
   if (!modules.length) {
     const tr = document.createElement('tr');
     const td = document.createElement('td');
-    td.colSpan = 9;
-    td.textContent = 'No modules yet';
+    td.colSpan = headerLabels.length || 9;
+    td.className = 'modules-table__empty';
+    td.textContent = 'No modules yet — add a prefab or craft one in the form above.';
     tr.appendChild(td);
     tbody.appendChild(tr);
+    updateModuleSummary();
     renderLibrary();
     return;
   }
 
   modules.forEach((m) => {
     const tr = document.createElement('tr');
-    const visual = m.asset ? assetLabel(m.asset) : '—';
-    const functionLabel = m.function || '—';
-    const values = [
-      m.id,
-      m.type,
-      functionLabel,
-      m.shape,
-      visual,
-      `(${formatNumber(m.x)}, ${formatNumber(m.y)}, ${formatNumber(m.z)})`,
-      `${formatNumber(m.w)}×${formatNumber(m.h)}×${formatNumber(m.d)}`,
-      m.color,
-    ];
-    values.forEach((value) => {
-      const td = document.createElement('td');
-      td.textContent = value;
-      tr.appendChild(td);
-    });
+    const visual = m.asset ? assetLabel(m.asset) || m.asset : '—';
 
-    const actionsTd = document.createElement('td');
+    const cells = [];
+
+    const idCell = document.createElement('td');
+    const idLabel = document.createElement('strong');
+    idLabel.textContent = m.id;
+    idCell.appendChild(idLabel);
+    if (m.asset) {
+      const assetChip = document.createElement('span');
+      assetChip.className = 'modules-table__chip';
+      assetChip.textContent = visual;
+      idCell.appendChild(assetChip);
+    }
+    cells.push(idCell);
+
+    const typeCell = document.createElement('td');
+    const typePill = document.createElement('span');
+    typePill.className = 'modules-table__pill';
+    typePill.textContent = m.type || '—';
+    typeCell.appendChild(typePill);
+    cells.push(typeCell);
+
+    const functionCell = document.createElement('td');
+    if (m.function) {
+      const fnPill = document.createElement('span');
+      fnPill.className = 'modules-table__pill';
+      fnPill.textContent = m.function;
+      functionCell.appendChild(fnPill);
+    } else {
+      functionCell.textContent = '—';
+    }
+    cells.push(functionCell);
+
+    const shapeCell = document.createElement('td');
+    shapeCell.textContent = m.shape || '—';
+    cells.push(shapeCell);
+
+    const visualCell = document.createElement('td');
+    visualCell.textContent = visual;
+    cells.push(visualCell);
+
+    const positionCell = document.createElement('td');
+    positionCell.textContent = `x ${formatNumber(m.x)} | y ${formatNumber(m.y)} | z ${formatNumber(m.z)}`;
+    cells.push(positionCell);
+
+    const sizeCell = document.createElement('td');
+    sizeCell.textContent = `${formatNumber(m.w)} x ${formatNumber(m.h)} x ${formatNumber(m.d)}`;
+    cells.push(sizeCell);
+
+    const colorCell = document.createElement('td');
+    const colorWrap = document.createElement('div');
+    colorWrap.className = 'modules-table__color';
+    const colorSwatch = document.createElement('span');
+    colorSwatch.className = 'modules-table__color-swatch';
+    const colorLabel = document.createElement('span');
+    const colorName = m.color || '—';
+    const colorHex = COLOR_HEX[colorName] || null;
+    if (colorHex) {
+      colorSwatch.style.backgroundColor = colorHex;
+    } else if (colorName && colorName !== '—') {
+      colorSwatch.style.backgroundColor = colorName;
+    }
+    colorLabel.textContent = colorName;
+    colorWrap.append(colorSwatch, colorLabel);
+    colorCell.appendChild(colorWrap);
+    cells.push(colorCell);
+
+    const actionsCell = document.createElement('td');
     const actionWrap = document.createElement('div');
     actionWrap.className = 'modules-table__actions';
 
@@ -560,11 +778,78 @@ function renderTable() {
       actionWrap.appendChild(btn);
     });
 
-    actionsTd.appendChild(actionWrap);
-    tr.appendChild(actionsTd);
+    actionsCell.appendChild(actionWrap);
+    cells.push(actionsCell);
+
+    cells.forEach((cell, index) => {
+      const headerLabel = headerLabels[index];
+      if (headerLabel) {
+        cell.dataset.label = headerLabel;
+      }
+      tr.appendChild(cell);
+    });
+
     tbody.appendChild(tr);
   });
+
+  updateModuleSummary();
   renderLibrary();
+}
+
+function scheduleAutoAnalysis(reason = 'update') {
+  if (autoAnalysisTimer) {
+    clearTimeout(autoAnalysisTimer);
+  }
+  autoAnalysisTimer = setTimeout(() => {
+    autoAnalysisTimer = null;
+    runAutoAnalysis(reason).catch((err) => {
+      console.error('Auto analysis failed', err);
+      pushStatus('Auto-analysis failed. Check the console for details.', { tone: 'warning', timeout: 6000 });
+    });
+  }, 320);
+}
+
+async function runAutoAnalysis(reason = 'update') {
+  if (isOptimizing) {
+    return autoAnalysisPromise;
+  }
+  if (autoAnalysisPromise) {
+    return autoAnalysisPromise;
+  }
+
+  autoAnalysisPromise = (async () => {
+    if (!modules.length) {
+      await simulate({ skipSave: true, quiet: true });
+      pushStatus('Simulation refreshed for an empty layout.', { tone: 'info', timeout: 2600 });
+      return;
+    }
+
+    let optimizeResult = null;
+    try {
+      optimizeResult = await optimizeLayout({ silent: true, skipSimulation: true, reason });
+    } catch (err) {
+      pushStatus('Auto-optimize failed. Inspect the console for context.', { tone: 'warning', timeout: 6000 });
+      throw err;
+    } finally {
+      try {
+        await simulate({ skipSave: true, quiet: true });
+      } catch (simErr) {
+        console.error('Auto simulation failed', simErr);
+        pushStatus('Auto-simulation failed. Check the console for details.', { tone: 'warning', timeout: 6000 });
+      }
+    }
+
+    if (optimizeResult && optimizeResult.statusMessage) {
+      pushStatus(optimizeResult.statusMessage, { tone: optimizeResult.statusTone, timeout: 2800 });
+    } else {
+      pushStatus('Layout auto-optimized after module update.', { tone: 'success', timeout: 2600 });
+    }
+  })()
+    .finally(() => {
+      autoAnalysisPromise = null;
+    });
+
+  return autoAnalysisPromise;
 }
 
 function ensureAssetOption(value) {
@@ -663,6 +948,8 @@ async function deleteModuleById(moduleId) {
   await saveLayout();
   renderTable();
   renderMap();
+  pushStatus(`Module ${moduleId} removed from the layout.`, { tone: 'info', timeout: 3000 });
+  scheduleAutoAnalysis('module-removed');
 }
 
 async function duplicateModuleById(moduleId) {
@@ -681,6 +968,8 @@ async function duplicateModuleById(moduleId) {
   await saveLayout();
   renderTable();
   renderMap();
+  pushStatus(`Module ${clamped.id} duplicated.`, { tone: 'info', timeout: 3000 });
+  scheduleAutoAnalysis('module-duplicated');
 }
 
 function computeExtents() {
@@ -1084,8 +1373,11 @@ async function spawnModuleFromTemplate(template) {
   await saveLayout();
   renderTable();
   renderMap();
+  pushStatus(`Module ${clamped.id} added from the library.`, { tone: 'success', timeout: 3200 });
+  scheduleAutoAnalysis('library-template');
   if (overlaps) {
     console.warn(`Module "${clamped.id}" overlaps existing geometry; adjust its placement manually.`);
+    pushStatus(`Module ${clamped.id} overlaps existing geometry. Adjust placement to avoid collisions.`, { tone: 'warning', timeout: 7000 });
   }
 }
 
@@ -1097,7 +1389,44 @@ function renderLibrary() {
 
   container.innerHTML = '';
 
-  moduleLibrary.forEach((item) => {
+  const hasEntries = moduleLibrary.length > 0;
+  const query = moduleLibraryQuery.trim();
+  const normalizedQuery = query.toLowerCase();
+  const filtered = hasEntries
+    ? moduleLibrary.filter((item) => {
+      if (!normalizedQuery) {
+        return true;
+      }
+      const haystack = [
+        item.label,
+        item.type,
+        item.function,
+        item.description,
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+      return haystack.includes(normalizedQuery);
+    })
+    : [];
+
+  if (!hasEntries) {
+    const placeholder = document.createElement('p');
+    placeholder.className = 'module-library__placeholder';
+    placeholder.textContent = 'Loading ready-made critical prefabs…';
+    container.appendChild(placeholder);
+    return;
+  }
+
+  if (!filtered.length) {
+    const placeholder = document.createElement('p');
+    placeholder.className = 'module-library__placeholder';
+    placeholder.textContent = query ? `No prefabs found for "${query}".` : 'No prefabs available.';
+    container.appendChild(placeholder);
+    return;
+  }
+
+  filtered.forEach((item) => {
     const count = modules.filter((mod) => mod.asset === item.asset).length;
 
     const card = document.createElement('div');
@@ -1534,44 +1863,282 @@ function buildModuleInfoList(modulesList) {
   });
 }
 
-function createRemovalQueue(moduleInfos) {
-  const lowPriority = [];
-  const highPriority = [];
-  moduleInfos.forEach((info) => {
-    const fc = Number.isFinite(info.functionCriticality) ? info.functionCriticality : null;
-    const tc = Number.isFinite(info.typeCriticality) ? info.typeCriticality : null;
-    const preserve = (fc !== null && fc >= 1) || (fc === null && tc === 1);
-    if (preserve) {
-      highPriority.push(info);
-    } else {
-      lowPriority.push(info);
-    }
-  });
-  lowPriority.sort((a, b) => b.volume - a.volume);
-  highPriority.sort((a, b) => a.volume - b.volume);
-  return [...lowPriority, ...highPriority];
+function resolveHabitatBounds(footprint = {}) {
+  const type = String(footprint.type || habitat.type || DEFAULT_HABITAT.type).toLowerCase();
+  const width = Math.max(numberOr(footprint.width, 0), 0);
+  const depth = Math.max(numberOr(footprint.depth, 0), 0);
+  const height = Math.max(numberOr(footprint.height, width || 0), 0);
+
+  if (type === 'cube') {
+    const halfWidth = width / 2;
+    const halfDepth = depth / 2;
+    const halfHeight = height / 2;
+    return {
+      type,
+      width,
+      depth,
+      height,
+      halfWidth,
+      halfDepth,
+      halfHeight,
+      radius: null,
+      floorZ: -halfHeight,
+      ceilingZ: halfHeight,
+    };
+  }
+
+  const radius = Math.max(numberOr(footprint.radius, width / 2), 0);
+  const diameter = radius * 2;
+  const length = Math.max(numberOr(footprint.length, depth), 0);
+  const halfDepth = length / 2;
+  const safeHeight = type === 'sphere' ? diameter : Math.max(height || diameter, 0);
+
+  if (type === 'sphere') {
+    return {
+      type,
+      width: diameter,
+      depth: diameter,
+      height: safeHeight,
+      halfWidth: diameter / 2,
+      halfDepth: diameter / 2,
+      halfHeight: safeHeight / 2,
+      radius,
+      floorZ: -radius,
+      ceilingZ: radius,
+    };
+  }
+
+  return {
+    type,
+    width: diameter,
+    depth: length,
+    height: safeHeight,
+    halfWidth: diameter / 2,
+    halfDepth,
+    halfHeight: safeHeight / 2,
+    radius,
+    floorZ: -radius,
+    ceilingZ: radius,
+  };
 }
 
-function attemptTypeClusterLayout(moduleInfos, footprint) {
-  const width = numberOr(footprint.width, 0);
-  const depth = numberOr(footprint.depth, 0);
-  if (!Number.isFinite(width) || !Number.isFinite(depth) || width <= 0 || depth <= 0) {
-    return { placements: new Map(), overflow: [...moduleInfos] };
+function describeOverflowReason(reason) {
+  if (!reason) {
+    return '';
   }
+  return OVERFLOW_REASON_TEXT[reason] || 'Does not fit';
+}
+
+function evaluateModuleFeasibility(info, bounds) {
+  if (!info || !bounds) {
+    return { ok: false, reason: 'invalid-data' };
+  }
+
+  const epsilon = 1e-6;
+  const width = Number.isFinite(info.width) ? info.width : 0;
+  const depth = Number.isFinite(info.depth) ? info.depth : 0;
+  const height = Number.isFinite(info.height) ? info.height : 0;
+
+  if (width <= 0 || depth <= 0 || height <= 0) {
+    return { ok: false, reason: 'invalid-dimensions' };
+  }
+
+  if (bounds.height > 0 && height > bounds.height + epsilon) {
+    return { ok: false, reason: 'height-exceeds' };
+  }
+
+  if (bounds.type === 'cube') {
+    if ((bounds.width > 0 && width > bounds.width + epsilon)
+      || (bounds.depth > 0 && depth > bounds.depth + epsilon)) {
+      return { ok: false, reason: 'footprint-exceeds' };
+    }
+    return { ok: true };
+  }
+
+  if (bounds.type === 'sphere') {
+    const radius = Number.isFinite(bounds.radius) ? bounds.radius : 0;
+    if (radius <= 0) {
+      return { ok: false, reason: 'invalid-habitat' };
+    }
+    const hx = width / 2;
+    const hy = depth / 2;
+    const hz = height / 2;
+    const moduleRadius = Math.sqrt((hx * hx) + (hy * hy) + (hz * hz));
+    if (moduleRadius > radius + epsilon) {
+      return { ok: false, reason: 'volume-exceeds' };
+    }
+    return { ok: true };
+  }
+
+  const radius = Number.isFinite(bounds.radius) ? bounds.radius : 0;
+  if (radius <= 0) {
+    return { ok: false, reason: 'invalid-habitat' };
+  }
+  const halfDepth = Number.isFinite(bounds.halfDepth) ? bounds.halfDepth : 0;
+  if (halfDepth > 0 && depth > (halfDepth * 2) + epsilon) {
+    return { ok: false, reason: 'length-exceeds' };
+  }
+  const hx = width / 2;
+  const hz = height / 2;
+  if (Math.hypot(hx, hz) > radius + epsilon) {
+    return { ok: false, reason: 'cross-section-exceeds' };
+  }
+  return { ok: true };
+}
+
+function placementWithinHabitat(placement, dims, bounds) {
+  if (!placement || !dims || !bounds) {
+    return false;
+  }
+  const epsilon = 1e-6;
+  const halfW = dims.width / 2;
+  const halfD = dims.depth / 2;
+  const halfH = dims.height / 2;
+
+  if (halfW < 0 || halfD < 0 || halfH < 0) {
+    return false;
+  }
+
+  if (bounds.type === 'cube') {
+    if (bounds.halfWidth > 0 && (placement.x + halfW > bounds.halfWidth + epsilon || placement.x - halfW < -bounds.halfWidth - epsilon)) {
+      return false;
+    }
+    if (bounds.halfDepth > 0 && (placement.y + halfD > bounds.halfDepth + epsilon || placement.y - halfD < -bounds.halfDepth - epsilon)) {
+      return false;
+    }
+    if (placement.z + halfH > bounds.ceilingZ + epsilon || placement.z - halfH < bounds.floorZ - epsilon) {
+      return false;
+    }
+    return true;
+  }
+
+  if (bounds.type === 'sphere') {
+    const radius = Number.isFinite(bounds.radius) ? bounds.radius : 0;
+    if (radius <= 0) {
+      return false;
+    }
+    const clamped = vectorClampToSphere(
+      placement.x,
+      placement.y,
+      placement.z,
+      halfW,
+      halfD,
+      halfH,
+      radius,
+    );
+    return (
+      Math.abs(clamped.x - placement.x) <= epsilon
+      && Math.abs(clamped.y - placement.y) <= epsilon
+      && Math.abs(clamped.z - placement.z) <= epsilon
+    );
+  }
+
+  const radius = Number.isFinite(bounds.radius) ? bounds.radius : 0;
+  if (radius <= 0) {
+    return false;
+  }
+  if (bounds.halfDepth > 0 && (placement.y + halfD > bounds.halfDepth + epsilon || placement.y - halfD < -bounds.halfDepth - epsilon)) {
+    return false;
+  }
+  if (placement.z + halfH > bounds.ceilingZ + epsilon || placement.z - halfH < bounds.floorZ - epsilon) {
+    return false;
+  }
+  const clamped = vectorClampToCircle(placement.x, placement.z, halfW, halfH, radius);
+  return (
+    Math.abs(clamped.x - placement.x) <= epsilon
+    && Math.abs(clamped.z - placement.z) <= epsilon
+  );
+}
+
+function attemptTypeClusterLayout(moduleInfos, footprint, options = {}) {
+  const bounds = resolveHabitatBounds(footprint || {});
+  const width = Number.isFinite(bounds.width) ? bounds.width : 0;
+  const depth = Number.isFinite(bounds.depth) ? bounds.depth : 0;
+  const heightLimit = Number.isFinite(bounds.height) ? bounds.height : 0;
+
+  if (width <= 0 || depth <= 0 || heightLimit <= 0) {
+    const overflowCopy = moduleInfos.slice();
+    const overflowVolume = overflowCopy.reduce(
+      (sum, info) => sum + (Number.isFinite(info?.volume) ? info.volume : 0),
+      0,
+    );
+    return {
+      placements: new Map(),
+      overflow: overflowCopy,
+      meta: {
+        options,
+        overflowVolume,
+        placedVolume: 0,
+        usableWidth: 0,
+        usableDepth: 0,
+        overflowReasons: {},
+        floorZ: bounds.floorZ ?? 0,
+        ceilingZ: bounds.ceilingZ ?? 0,
+        habitatType: bounds.type,
+      },
+    };
+  }
+
+  const marginFactor = Number.isFinite(options.marginFactor) ? options.marginFactor : 0.05;
+  const minMargin = Number.isFinite(options.minMargin) ? options.minMargin : 0.5;
+  const gapFactor = Number.isFinite(options.gapFactor) ? options.gapFactor : 0.5;
+  const minGap = Number.isFinite(options.minGap) ? options.minGap : 0.25;
+  const allowRotate = Boolean(options.allowRotate);
+  const moduleOrder = options.moduleOrder === 'area-asc' ? 'area-asc' : 'area-desc';
+  const groupOrder = options.groupOrder === 'ascending' ? 'ascending' : 'descending';
+
   const minX = -width / 2;
   const maxX = width / 2;
   const minY = -depth / 2;
   const maxY = depth / 2;
-  const margin = Math.max(0.5, Math.min(width, depth) * 0.05);
-  const gap = Math.max(0.25, margin / 2);
+  const margin = Math.max(minMargin, Math.min(width, depth) * marginFactor);
+  const gap = Math.max(minGap, margin * gapFactor);
   const usableWidth = Math.max(width - (2 * margin), 0);
   const usableDepth = Math.max(depth - (2 * margin), 0);
+
   if (usableWidth <= 0 || usableDepth <= 0) {
-    return { placements: new Map(), overflow: [...moduleInfos] };
+    const overflowCopy = moduleInfos.slice();
+    const overflowVolume = overflowCopy.reduce(
+      (sum, info) => sum + (Number.isFinite(info?.volume) ? info.volume : 0),
+      0,
+    );
+    return {
+      placements: new Map(),
+      overflow: overflowCopy,
+      meta: {
+        options,
+        overflowVolume,
+        placedVolume: 0,
+        usableWidth,
+        usableDepth,
+        overflowReasons: {},
+        floorZ: bounds.floorZ ?? 0,
+        ceilingZ: bounds.ceilingZ ?? 0,
+        habitatType: bounds.type,
+      },
+    };
   }
 
-  const typeGroups = new Map();
+  const overflowSet = new Set();
+  const overflowReasons = new Map();
+  const placeableInfos = [];
+
   moduleInfos.forEach((info) => {
+    const feasibility = evaluateModuleFeasibility(info, bounds);
+    if (!feasibility.ok) {
+      if (info?.id != null) {
+        overflowSet.add(info.id);
+        if (feasibility.reason) {
+          overflowReasons.set(info.id, feasibility.reason);
+        }
+      }
+      return;
+    }
+    placeableInfos.push(info);
+  });
+
+  const typeGroups = new Map();
+  placeableInfos.forEach((info) => {
     const typeKey = canonicalRequirementText(info.type || info.module.type || info.module.kind || 'generic') || 'generic';
     if (!typeGroups.has(typeKey)) {
       typeGroups.set(typeKey, []);
@@ -1581,68 +2148,155 @@ function attemptTypeClusterLayout(moduleInfos, footprint) {
 
   const groups = Array.from(typeGroups.values());
   groups.sort((groupA, groupB) => {
-    const totalA = groupA.reduce((sum, item) => sum + item.volume, 0);
-    const totalB = groupB.reduce((sum, item) => sum + item.volume, 0);
+    const totalA = groupA.reduce((sum, item) => sum + (Number.isFinite(item.volume) ? item.volume : 0), 0);
+    const totalB = groupB.reduce((sum, item) => sum + (Number.isFinite(item.volume) ? item.volume : 0), 0);
+    if (groupOrder === 'ascending') {
+      return totalA - totalB;
+    }
     return totalB - totalA;
   });
-  groups.forEach((group) => {
-    group.sort((a, b) => (b.width * b.depth) - (a.width * a.depth));
-  });
-
   const placements = new Map();
-  const overflowSet = new Set();
   let groupStartY = minY + margin;
 
+  function buildCandidateDimensions(info, state) {
+    const dims = [];
+    const baseWidth = Math.max(Math.min(info.width, usableWidth), 0.1);
+    const baseDepth = Math.max(Math.min(info.depth, usableDepth), 0.1);
+    dims.push({ width: baseWidth, depth: baseDepth, rotated: false });
+    if (allowRotate && Math.abs(info.width - info.depth) > 1e-6) {
+      const rotatedWidth = Math.max(Math.min(info.depth, usableWidth), 0.1);
+      const rotatedDepth = Math.max(Math.min(info.width, usableDepth), 0.1);
+      if (rotatedWidth !== baseWidth || rotatedDepth !== baseDepth) {
+        dims.push({ width: rotatedWidth, depth: rotatedDepth, rotated: true });
+      }
+    }
+    const remainingWidth = Math.max(usableWidth - state.xCursor, 0);
+    dims.sort((a, b) => Math.abs(remainingWidth - a.width) - Math.abs(remainingWidth - b.width));
+    return dims;
+  }
+
+  function attemptPlacement(info, dims, state) {
+    const height = Math.max(info.height, 0.1);
+    let nextXCursor = state.xCursor;
+    let nextRowStartY = state.rowStartY;
+    let nextRowHeight = state.rowHeight;
+
+    if (nextXCursor + dims.width > usableWidth + 1e-6) {
+      nextXCursor = 0;
+      nextRowStartY = state.rowStartY + state.rowHeight + gap;
+      nextRowHeight = 0;
+    }
+
+    const centerY = nextRowStartY + (dims.depth / 2);
+    if (centerY + (dims.depth / 2) > maxY - margin + 1e-6) {
+      return null;
+    }
+
+    const centerX = (minX + margin) + nextXCursor + (dims.width / 2);
+    if (centerX + (dims.width / 2) > maxX - margin + 1e-6) {
+      return null;
+    }
+
+    const halfHeight = height / 2;
+    const baseZ = (bounds.floorZ ?? 0) + halfHeight;
+    const placement = {
+      x: centerX,
+      y: centerY,
+      z: baseZ,
+      w: dims.width,
+      d: dims.depth,
+      h: height,
+    };
+
+    if (!placementWithinHabitat(placement, { width: dims.width, depth: dims.depth, height }, bounds)) {
+      const ceilingLimit = (bounds.ceilingZ ?? baseZ) - halfHeight;
+      if (!Number.isFinite(ceilingLimit) || ceilingLimit < baseZ - 1e-6) {
+        return null;
+      }
+
+      let low = baseZ;
+      let high = ceilingLimit;
+      let best = null;
+      for (let iter = 0; iter < 24; iter += 1) {
+        const mid = (low + high) / 2;
+        placement.z = mid;
+        if (placementWithinHabitat(placement, { width: dims.width, depth: dims.depth, height }, bounds)) {
+          best = mid;
+          high = mid;
+        } else {
+          low = mid;
+        }
+        if (high - low < 1e-3) {
+          break;
+        }
+      }
+
+      if (best === null) {
+        return null;
+      }
+      placement.z = best;
+    }
+
+    return {
+      placement,
+      xCursor: nextXCursor + dims.width + gap,
+      rowStartY: nextRowStartY,
+      rowHeight: Math.max(nextRowHeight, dims.depth),
+      groupBottom: Math.max(state.groupBottom, centerY + (dims.depth / 2)),
+    };
+  }
+
   for (let gIndex = 0; gIndex < groups.length; gIndex += 1) {
-    const group = groups[gIndex];
-    let rowStartY = groupStartY;
-    let rowHeight = 0;
-    let xCursor = 0;
-    let groupBottom = groupStartY;
+    const group = groups[gIndex].slice();
+    group.sort((a, b) => {
+      const areaA = (a.width * a.depth);
+      const areaB = (b.width * b.depth);
+      if (moduleOrder === 'area-asc') {
+        return areaA - areaB;
+      }
+      return areaB - areaA;
+    });
+
+    const state = {
+      xCursor: 0,
+      rowStartY: groupStartY,
+      rowHeight: 0,
+      groupBottom: groupStartY,
+    };
 
     for (let i = 0; i < group.length; i += 1) {
       const info = group[i];
-      const widthClamped = Math.max(Math.min(info.width, usableWidth), 0.1);
-      const depthClamped = Math.max(Math.min(info.depth, usableDepth), 0.1);
-      const height = Math.max(info.height, 0.1);
-
-      if (xCursor + widthClamped > usableWidth + 1e-6) {
-        xCursor = 0;
-        rowStartY += rowHeight + gap;
-        rowHeight = 0;
+      const candidates = buildCandidateDimensions(info, state);
+      let placed = false;
+      for (let cIndex = 0; cIndex < candidates.length; cIndex += 1) {
+        const attempt = attemptPlacement(info, candidates[cIndex], state);
+        if (!attempt) {
+          continue;
+        }
+        placements.set(info.id, attempt.placement);
+        state.xCursor = attempt.xCursor;
+        state.rowStartY = attempt.rowStartY;
+        state.rowHeight = attempt.rowHeight;
+        state.groupBottom = attempt.groupBottom;
+        placed = true;
+        break;
       }
-
-      const centerY = rowStartY + (depthClamped / 2);
-      if (centerY + (depthClamped / 2) > maxY - margin + 1e-6) {
+      if (!placed) {
         overflowSet.add(info.id);
-        continue;
+        if (!overflowReasons.has(info.id)) {
+          overflowReasons.set(info.id, 'space-exhausted');
+        }
       }
-
-      const centerX = (minX + margin) + xCursor + (widthClamped / 2);
-      if (centerX + (widthClamped / 2) > maxX - margin + 1e-6) {
-        overflowSet.add(info.id);
-        continue;
-      }
-
-      placements.set(info.id, {
-        x: centerX,
-        y: centerY,
-        z: height / 2,
-        w: widthClamped,
-        d: depthClamped,
-        h: height,
-      });
-
-      xCursor += widthClamped + gap;
-      rowHeight = Math.max(rowHeight, depthClamped);
-      groupBottom = Math.max(groupBottom, centerY + (depthClamped / 2));
     }
 
-    groupStartY = groupBottom + gap;
+    groupStartY = state.groupBottom + gap;
     if (groupStartY > maxY - margin) {
       for (let j = gIndex + 1; j < groups.length; j += 1) {
         groups[j].forEach((info) => {
           overflowSet.add(info.id);
+          if (!overflowReasons.has(info.id)) {
+            overflowReasons.set(info.id, 'space-exhausted');
+          }
         });
       }
       break;
@@ -1652,17 +2306,303 @@ function attemptTypeClusterLayout(moduleInfos, footprint) {
   moduleInfos.forEach((info) => {
     if (!placements.has(info.id)) {
       overflowSet.add(info.id);
+      if (!overflowReasons.has(info.id)) {
+        overflowReasons.set(info.id, 'space-exhausted');
+      }
     }
   });
 
-  const overflow = moduleInfos.filter((info) => overflowSet.has(info.id));
-  return { placements, overflow };
+  const overflow = moduleInfos
+    .filter((info) => overflowSet.has(info.id))
+    .map((info) => ({ ...info, overflowReason: overflowReasons.get(info.id) || null }));
+  const overflowVolume = overflow.reduce(
+    (sum, info) => sum + (Number.isFinite(info?.volume) ? info.volume : 0),
+    0,
+  );
+  const placedVolume = moduleInfos.reduce(
+    (sum, info) => sum + (placements.has(info.id) && Number.isFinite(info?.volume) ? info.volume : 0),
+    0,
+  );
+
+  return {
+    placements,
+    overflow,
+    meta: {
+      options,
+      overflowVolume,
+      placedVolume,
+      usableWidth,
+      usableDepth,
+      overflowReasons: Object.fromEntries(overflowReasons.entries()),
+      floorZ: bounds.floorZ ?? 0,
+      ceilingZ: bounds.ceilingZ ?? 0,
+      habitatType: bounds.type,
+    },
+  };
 }
 
-async function optimizeLayout() {
-  if (!modules.length) {
-    window.alert('Add modules before optimizing the layout.');
+function evaluateLayoutStrategies(moduleInfos, footprint) {
+  const strategies = [
+    { key: 'default' },
+    { key: 'rotate', allowRotate: true },
+    { key: 'tight-gap', allowRotate: true, marginFactor: 0.04, gapFactor: 0.4 },
+    { key: 'compact', allowRotate: true, marginFactor: 0.03, gapFactor: 0.3, moduleOrder: 'area-asc' },
+    {
+      key: 'dense',
+      allowRotate: true,
+      marginFactor: 0.02,
+      gapFactor: 0.25,
+      minMargin: 0.35,
+      minGap: 0.2,
+      moduleOrder: 'area-asc',
+      groupOrder: 'ascending',
+    },
+  ];
+
+  let bestResult = null;
+  for (let i = 0; i < strategies.length; i += 1) {
+    const strategy = strategies[i];
+    const attempt = attemptTypeClusterLayout(moduleInfos, footprint, strategy);
+    const decorated = { ...attempt, strategy };
+    if (!bestResult) {
+      bestResult = decorated;
+    } else {
+      const currentOverflow = decorated.overflow.length;
+      const bestOverflow = bestResult.overflow.length;
+      const currentVolume = decorated.meta?.overflowVolume ?? Number.POSITIVE_INFINITY;
+      const bestVolume = bestResult.meta?.overflowVolume ?? Number.POSITIVE_INFINITY;
+      if (
+        currentOverflow < bestOverflow
+        || (currentOverflow === bestOverflow && currentVolume < bestVolume)
+      ) {
+        bestResult = decorated;
+      }
+    }
+    if (!decorated.overflow.length) {
+      bestResult = decorated;
+      break;
+    }
+  }
+  return bestResult;
+}
+
+function populateModuleRemovalDialog(overflowInfos, allInfos, attempt = 0) {
+  if (!moduleRemovalList) {
     return;
+  }
+
+  moduleRemovalList.innerHTML = '';
+  moduleRemovalList.classList.remove('modal__list--empty');
+  if (moduleRemovalRemoveAll) {
+    moduleRemovalRemoveAll.disabled = !(overflowInfos && overflowInfos.length);
+  }
+  if (moduleRemovalMessage) {
+    moduleRemovalMessage.textContent = attempt > 0
+      ? 'Space is still constrained. Remove another module or clear all overflow to continue optimizing.'
+      : 'Some modules cannot fit inside the habitat. Select a module to remove or clear all overflow to free up space.';
+  }
+
+  const overflowDetailMap = new Map((overflowInfos || []).map((info) => [info.id, info]));
+  const overflowIds = new Set((overflowInfos || []).map((info) => info.id));
+  const sorted = (allInfos || [])
+    .slice()
+    .sort((a, b) => {
+      const aOverflow = overflowIds.has(a.id) ? 1 : 0;
+      const bOverflow = overflowIds.has(b.id) ? 1 : 0;
+      if (aOverflow !== bOverflow) {
+        return bOverflow - aOverflow;
+      }
+      const volA = Number.isFinite(a.volume) ? a.volume : 0;
+      const volB = Number.isFinite(b.volume) ? b.volume : 0;
+      if (volA !== volB) {
+        return volB - volA;
+      }
+      return String(a.id).localeCompare(String(b.id));
+    });
+
+  if (!sorted.length) {
+    const emptyNote = document.createElement('li');
+    emptyNote.className = 'modal__empty';
+    emptyNote.textContent = 'No modules available to remove.';
+    moduleRemovalList.appendChild(emptyNote);
+    moduleRemovalList.classList.add('modal__list--empty');
+    if (moduleRemovalConfirm) {
+      moduleRemovalConfirm.disabled = true;
+    }
+    moduleRemovalSelectedId = null;
+    return;
+  }
+
+  const fragment = document.createDocumentFragment();
+  sorted.forEach((info) => {
+    if (!info || !info.module) {
+      return;
+    }
+    const role = info.module.function || info.module.type || info.type || 'Module';
+    const dimsText = `${formatNumber(info.width, 1)}m × ${formatNumber(info.depth, 1)}m × ${formatNumber(info.height, 1)}m`;
+    const volumeText = `${formatNumber(info.volume, 1)} m³`;
+
+    const item = document.createElement('li');
+    item.className = 'modal__option';
+
+    const label = document.createElement('label');
+    label.className = 'modal__option-label';
+
+    const radio = document.createElement('input');
+    radio.type = 'radio';
+    radio.name = 'moduleRemovalChoice';
+    radio.value = info.id;
+    radio.className = 'modal__option-input';
+
+    const body = document.createElement('div');
+    body.className = 'modal__option-body';
+
+    const title = document.createElement('div');
+    title.className = 'modal__option-title';
+    title.textContent = info.id;
+
+    const meta = document.createElement('div');
+    meta.className = 'modal__option-meta';
+    meta.textContent = `${role} • ${dimsText} • ${volumeText}`;
+
+    body.appendChild(title);
+    body.appendChild(meta);
+
+    if (overflowIds.has(info.id)) {
+      const overflowInfo = overflowDetailMap.get(info.id) || info;
+      const reasonText = describeOverflowReason(overflowInfo?.overflowReason);
+      const badge = document.createElement('span');
+      badge.className = 'modal__badge modal__badge--alert';
+      badge.textContent = reasonText || 'Does not fit';
+      body.appendChild(badge);
+    }
+
+    label.appendChild(radio);
+    label.appendChild(body);
+    item.appendChild(label);
+    fragment.appendChild(item);
+  });
+
+  moduleRemovalList.appendChild(fragment);
+  moduleRemovalSelectedId = null;
+  if (moduleRemovalConfirm) {
+    moduleRemovalConfirm.disabled = true;
+  }
+}
+
+function closeModuleRemovalDialog(result) {
+  if (moduleRemovalOverlay) {
+    moduleRemovalOverlay.classList.remove('modal--open');
+    moduleRemovalOverlay.setAttribute('aria-hidden', 'true');
+  }
+  if (moduleRemovalKeyHandler) {
+    document.removeEventListener('keydown', moduleRemovalKeyHandler, true);
+  }
+  moduleRemovalKeyHandler = null;
+
+  const resolver = moduleRemovalResolver;
+  moduleRemovalResolver = null;
+  moduleRemovalSelectedId = null;
+
+  if (moduleRemovalConfirm) {
+    moduleRemovalConfirm.disabled = true;
+  }
+  if (moduleRemovalList) {
+    moduleRemovalList.innerHTML = '';
+    moduleRemovalList.classList.remove('modal__list--empty');
+  }
+  
+  const focusTarget = moduleRemovalFocusedBeforeOpen;
+  moduleRemovalFocusedBeforeOpen = null;
+  if (focusTarget && typeof focusTarget.focus === 'function') {
+    focusTarget.focus();
+  }
+
+  if (typeof resolver === 'function') {
+    resolver(typeof result === 'string' ? result : null);
+  }
+}
+
+function showModuleRemovalDialog({ overflowInfos, allInfos, attempt = 0 }) {
+  if (!moduleRemovalOverlay || !moduleRemovalDialog || !moduleRemovalList || !moduleRemovalConfirm) {
+    return Promise.resolve(null);
+  }
+
+  populateModuleRemovalDialog(overflowInfos, allInfos, attempt);
+
+  return new Promise((resolve) => {
+    moduleRemovalResolver = resolve;
+    moduleRemovalFocusedBeforeOpen = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+
+    moduleRemovalOverlay.classList.add('modal--open');
+    moduleRemovalOverlay.setAttribute('aria-hidden', 'false');
+
+    if (typeof moduleRemovalDialog.focus === 'function') {
+      moduleRemovalDialog.focus({ preventScroll: true });
+    }
+
+    const firstRadio = moduleRemovalList.querySelector('input[type="radio"]');
+    if (firstRadio && typeof firstRadio.focus === 'function') {
+      firstRadio.focus({ preventScroll: true });
+    }
+
+    moduleRemovalKeyHandler = (event) => {
+      if (!moduleRemovalOverlay.classList.contains('modal--open')) {
+        return;
+      }
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        closeModuleRemovalDialog(null);
+        return;
+      }
+      if (event.key === 'Tab' && moduleRemovalDialog) {
+        const focusable = Array.from(
+          moduleRemovalDialog.querySelectorAll(moduleRemovalFocusSelectors),
+        ).filter((el) => el instanceof HTMLElement && !el.hasAttribute('disabled'));
+        if (!focusable.length) {
+          event.preventDefault();
+          return;
+        }
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        const active = document.activeElement;
+        if (event.shiftKey) {
+          if (active === first || !moduleRemovalDialog.contains(active)) {
+            last.focus();
+            event.preventDefault();
+          }
+        } else if (active === last) {
+          first.focus();
+          event.preventDefault();
+        }
+      }
+    };
+
+    document.addEventListener('keydown', moduleRemovalKeyHandler, true);
+  });
+}
+
+async function optimizeLayout(options = null) {
+  const defaults = { silent: false, skipSimulation: false, reason: 'manual' };
+  const resolved = typeof options === 'object' && options !== null
+    ? { ...defaults, ...options }
+    : typeof options === 'boolean'
+      ? { ...defaults, silent: options }
+      : defaults;
+
+  const { silent, skipSimulation } = resolved;
+
+  if (isOptimizing) {
+    return { statusMessage: 'Optimization already in progress.', statusTone: 'info', overlaps: [], removed: [] };
+  }
+
+  if (!modules.length) {
+    if (!silent) {
+      pushStatus('Add modules before running the optimizer.', { tone: 'warning', timeout: 4200 });
+    }
+    return { statusMessage: 'No modules to optimize.', statusTone: 'warning', overlaps: [], removed: [] };
   }
 
   const footprint = getHabitatFootprint();
@@ -1672,115 +2612,251 @@ async function optimizeLayout() {
     || footprint.width <= 0
     || footprint.depth <= 0
   ) {
-    window.alert('Cannot determine habitat footprint.');
-    return;
+    if (!silent) {
+      pushStatus('Cannot determine habitat footprint. Adjust habitat parameters first.', { tone: 'warning', timeout: 5200 });
+    }
+    return { statusMessage: 'Invalid habitat footprint.', statusTone: 'warning', overlaps: [], removed: [] };
   }
 
   await ensureRequirementCatalog();
 
   const moduleInfos = buildModuleInfoList(modules);
   if (!moduleInfos.length) {
-    window.alert('No modules available for optimization.');
-    return;
+    if (!silent) {
+      pushStatus('No modules available for optimization.', { tone: 'warning', timeout: 4200 });
+    }
+    return { statusMessage: 'No modules available for optimization.', statusTone: 'warning', overlaps: [], removed: [] };
   }
 
-  let workingInfos = moduleInfos.slice();
-  const removalQueue = createRemovalQueue(moduleInfos.slice());
-  let layoutResult = attemptTypeClusterLayout(workingInfos, footprint);
-  const removedMap = new Map();
+  isOptimizing = true;
 
-  while (layoutResult.overflow.length && removalQueue.length) {
-    const nextRemoval = removalQueue.shift();
-    if (!workingInfos.some((info) => info.id === nextRemoval.id)) {
-      continue;
-    }
-    removedMap.set(nextRemoval.id, nextRemoval);
-    workingInfos = workingInfos.filter((info) => info.id !== nextRemoval.id);
-    layoutResult = attemptTypeClusterLayout(workingInfos, footprint);
-  }
-
-  if (layoutResult.overflow.length) {
-    let overflowGuard = 0;
-    while (layoutResult.overflow.length) {
-      const overflowIds = new Set(layoutResult.overflow.map((info) => info.id));
-      layoutResult.overflow.forEach((info) => {
-        if (!removedMap.has(info.id)) {
-          removedMap.set(info.id, info);
-        }
-      });
-      const nextInfos = workingInfos.filter((info) => !overflowIds.has(info.id));
-      if (nextInfos.length === workingInfos.length) {
-        break;
-      }
-      workingInfos = nextInfos;
-      layoutResult = attemptTypeClusterLayout(workingInfos, footprint);
-      overflowGuard += 1;
-      if (overflowGuard > moduleInfos.length) {
-        break;
-      }
-    }
-  }
-
-  const keptIds = new Set(workingInfos.map((info) => info.id));
-  const placements = layoutResult.placements;
-  modules = modules.filter((mod) => keptIds.has(mod.id));
-
-  modules = modules.map((mod) => {
-    const placement = placements.get(mod.id);
-    if (!placement) {
-      return mod;
-    }
-    const updated = {
-      ...mod,
-      x: placement.x,
-      y: placement.y,
-      z: placement.z,
-      w: placement.w,
-      d: placement.d,
-      h: placement.h,
+  try {
+    const originalModules = modules.map((mod) => ({ ...mod }));
+    const infoLookup = new Map(moduleInfos.map((info) => [info.id, info]));
+    const removedMap = new Map();
+    let workingInfos = moduleInfos.slice();
+    let attemptIndex = 0;
+    let layoutResult = evaluateLayoutStrategies(workingInfos, footprint) || {
+      placements: new Map(),
+      overflow: workingInfos.slice(),
+      meta: {},
     };
-    return clampModuleToHabitat(updated);
-  });
 
-  await saveLayout();
-  renderTable();
-  renderMap();
+    if (
+      layoutResult.overflow.length
+      && (!moduleRemovalOverlay || !moduleRemovalDialog || !moduleRemovalList || !moduleRemovalConfirm || !moduleRemovalRemoveAll)
+    ) {
+      const statusMessage = 'Layout exceeds habitat capacity and manual removal is unavailable.';
+      if (!silent) {
+        pushStatus(statusMessage, { tone: 'danger', timeout: 6800 });
+      }
+      return { statusMessage, statusTone: 'danger', overlaps: [], removed: [], criticalRemoved: [] };
+    }
 
-  const overlaps = findOverlaps(modules);
-  const removedList = Array.from(removedMap.values());
-  const criticalRemoved = removedList.filter((info) => {
-    const fc = Number.isFinite(info.functionCriticality) ? info.functionCriticality : null;
-    const tc = Number.isFinite(info.typeCriticality) ? info.typeCriticality : null;
-    return (fc !== null && fc >= 1) || (fc === null && tc === 1);
-  });
+    while (layoutResult.overflow.length && workingInfos.length) {
+      const selectionId = await showModuleRemovalDialog({
+        overflowInfos: layoutResult.overflow,
+        allInfos: workingInfos,
+        attempt: attemptIndex,
+      });
 
-  const messages = [];
-  if (overlaps.length) {
-    const pairs = overlaps.map(([a, b]) => `${a} ↔ ${b}`);
-    messages.push(`Overlapping modules detected: ${pairs.join(', ')}`);
-  }
-  if (removedList.length) {
-    const removedText = removedList
-      .map((info) => `${info.id} (${info.module.function || info.module.type || 'module'})`)
-      .join(', ');
-    messages.push(`Removed modules that could not fit: ${removedText}`);
-  }
-  if (criticalRemoved.length) {
-    const criticalText = criticalRemoved
-      .map((info) => `${info.id} (${info.module.function || info.module.type || 'module'})`)
-      .join(', ');
-    messages.push(`⚠️ Critical modules removed: ${criticalText}`);
-  }
+      if (!selectionId) {
+        modules = originalModules.map((mod) => ({ ...mod }));
+        renderTable();
+        renderMap();
+        const overlaps = findOverlaps(modules);
+        const statusMessage = 'Optimization canceled. Layout left unchanged.';
+        if (!silent) {
+          pushStatus(statusMessage, { tone: 'info', timeout: 5200 });
+        }
+        return {
+          statusMessage,
+          statusTone: 'info',
+          overlaps,
+          removed: [],
+          criticalRemoved: [],
+        };
+      }
 
-  if (messages.length) {
-    window.alert(messages.join('\n'));
-  } else {
-    window.alert('Layout optimized by grouping modules by type within habitat constraints.');
+      if (selectionId === MODULE_REMOVAL_ALL) {
+        const overflowDetails = new Map((layoutResult.overflow || []).map((info) => [info.id, info]));
+        const reasonsLookup = layoutResult.meta?.overflowReasons || {};
+        const overflowIds = new Set(overflowDetails.keys());
+        overflowIds.forEach((id) => {
+          if (infoLookup.has(id)) {
+            const snapshot = { ...infoLookup.get(id) };
+            const detail = overflowDetails.get(id);
+            const reason = detail?.overflowReason || reasonsLookup[id] || null;
+            if (reason) {
+              snapshot.overflowReason = reason;
+            }
+            removedMap.set(id, snapshot);
+            infoLookup.delete(id);
+          }
+        });
+        workingInfos = workingInfos.filter((info) => !overflowIds.has(info.id));
+        attemptIndex += 1;
+
+        if (!workingInfos.length) {
+          layoutResult = { placements: new Map(), overflow: [], meta: {} };
+          break;
+        }
+
+        layoutResult = evaluateLayoutStrategies(workingInfos, footprint) || {
+          placements: new Map(),
+          overflow: workingInfos.slice(),
+          meta: {},
+        };
+        continue;
+      }
+
+      if (infoLookup.has(selectionId)) {
+        const snapshot = { ...infoLookup.get(selectionId) };
+        const reasonsLookup = layoutResult.meta?.overflowReasons || {};
+        const overflowDetail = (layoutResult.overflow || []).find((info) => info.id === selectionId);
+        const reason = overflowDetail?.overflowReason || reasonsLookup[selectionId] || null;
+        if (reason) {
+          snapshot.overflowReason = reason;
+        }
+        removedMap.set(selectionId, snapshot);
+        infoLookup.delete(selectionId);
+      }
+
+      workingInfos = workingInfos.filter((info) => info.id !== selectionId);
+      attemptIndex += 1;
+
+      if (!workingInfos.length) {
+        layoutResult = { placements: new Map(), overflow: [], meta: {} };
+        break;
+      }
+
+      layoutResult = evaluateLayoutStrategies(workingInfos, footprint) || {
+        placements: new Map(),
+        overflow: workingInfos.slice(),
+        meta: {},
+      };
+    }
+
+    if (layoutResult.overflow.length) {
+      modules = originalModules.map((mod) => ({ ...mod }));
+      renderTable();
+      renderMap();
+      const overlaps = findOverlaps(modules);
+      const outstandingReasons = Array.from(new Set(Object.values(layoutResult.meta?.overflowReasons || {})))
+        .filter(Boolean);
+      let statusMessage = 'Optimization failed. Insufficient habitat space even after removals.';
+      const reasonDescriptions = outstandingReasons
+        .map((code) => describeOverflowReason(code))
+        .filter((text) => text && text !== 'Does not fit');
+      if (reasonDescriptions.length) {
+        statusMessage += ` Constraints preventing placement: ${reasonDescriptions.join('; ')}.`;
+      }
+      if (!silent) {
+        pushStatus(statusMessage, { tone: 'danger', timeout: 6800 });
+      }
+      return {
+        statusMessage,
+        statusTone: 'danger',
+        overlaps,
+        removed: [],
+        criticalRemoved: [],
+      };
+    }
+
+    const keptIds = new Set(workingInfos.map((info) => info.id));
+    const placementMap = layoutResult.placements || new Map();
+
+    modules = originalModules.filter((mod) => keptIds.has(mod.id));
+    modules = modules.map((mod) => {
+      const placement = placementMap.get(mod.id);
+      if (!placement) {
+        return clampModuleToHabitat({ ...mod });
+      }
+      return clampModuleToHabitat({
+        ...mod,
+        x: placement.x,
+        y: placement.y,
+        z: placement.z,
+        w: placement.w,
+        d: placement.d,
+        h: placement.h,
+      });
+    });
+
+    await saveLayout();
+    renderTable();
+    renderMap();
+
+    const overlaps = findOverlaps(modules);
+    const removedList = Array.from(removedMap.values());
+    const criticalRemoved = removedList.filter((info) => {
+      const fc = Number.isFinite(info.functionCriticality) ? info.functionCriticality : null;
+      const tc = Number.isFinite(info.typeCriticality) ? info.typeCriticality : null;
+      return (fc !== null && fc >= 1) || (fc === null && tc === 1);
+    });
+
+    const messages = [];
+    let statusTone = 'success';
+
+    if (overlaps.length) {
+      const pairs = overlaps.map(([a, b]) => `${a} <-> ${b}`);
+      messages.push(`Overlapping modules detected: ${pairs.join(', ')}`);
+      statusTone = 'warning';
+    }
+    if (removedList.length) {
+      const removedText = removedList
+        .map((info) => {
+          const role = info.module.function || info.module.type || info.type || 'module';
+          const reasonText = describeOverflowReason(info.overflowReason);
+          return reasonText && reasonText !== 'Does not fit'
+            ? `${info.id} (${role}, ${reasonText})`
+            : `${info.id} (${role})`;
+        })
+        .join(', ');
+      messages.push(`Removed modules per user selection: ${removedText}`);
+      statusTone = 'warning';
+    }
+    if (criticalRemoved.length) {
+      const criticalText = criticalRemoved
+        .map((info) => `${info.id} (${info.module.function || info.module.type || 'module'})`)
+        .join(', ');
+      messages.push(`Critical modules removed: ${criticalText}`);
+      statusTone = 'danger';
+    }
+
+    let statusMessage = removedList.length
+      ? 'Layout optimized after removing user-selected modules.'
+      : 'Layout optimized by re-evaluating empty space.';
+    if (messages.length) {
+      statusMessage = messages.join(' | ');
+    }
+
+    if (!skipSimulation) {
+      await simulate({ skipSave: true, quiet: silent && statusTone === 'success' });
+    }
+
+    if (!silent) {
+      pushStatus(statusMessage, { tone: statusTone, timeout: statusTone === 'success' ? 3200 : 6800 });
+    }
+
+    return {
+      statusMessage,
+      statusTone,
+      overlaps,
+      removed: removedList,
+      criticalRemoved,
+    };
+  } finally {
+    isOptimizing = false;
   }
 }
 
-async function simulate(skipSave = false) {
-  if (!skipSave) {
+async function simulate(options = undefined) {
+  const resolved = typeof options === 'object' && options !== null
+    ? { skipSave: Boolean(options.skipSave), quiet: Boolean(options.quiet) }
+    : { skipSave: Boolean(options === true), quiet: false };
+
+  if (!resolved.skipSave) {
     await saveLayout();
   }
   try {
@@ -1791,9 +2867,67 @@ async function simulate(skipSave = false) {
     const data = await res.json();
     updateMetricsView(data.metrics, data.requirements);
     document.getElementById('snapshot').src = `/snapshot?nocache=${Date.now()}`;
+    if (!resolved.quiet) {
+      pushStatus('Simulation refreshed with the latest metrics.', { tone: 'success', timeout: 3600 });
+    }
   } catch (err) {
     console.error('Simulation failed', err);
+    if (!resolved.quiet) {
+      pushStatus('Simulation failed. Check the console for details.', { tone: 'danger', timeout: 6000 });
+    }
+    throw err;
   }
+}
+
+if (moduleRemovalList) {
+  moduleRemovalList.addEventListener('change', (event) => {
+    const target = event.target;
+    if (!target || target.name !== 'moduleRemovalChoice') {
+      return;
+    }
+    moduleRemovalSelectedId = target.value || null;
+    const options = moduleRemovalList.querySelectorAll('.modal__option');
+    options.forEach((item) => {
+      item.classList.remove('modal__option--selected');
+    });
+    const optionItem = target.closest('.modal__option');
+    if (optionItem) {
+      optionItem.classList.add('modal__option--selected');
+    }
+    if (moduleRemovalConfirm) {
+      moduleRemovalConfirm.disabled = !moduleRemovalSelectedId;
+    }
+  });
+}
+
+if (moduleRemovalConfirm) {
+  moduleRemovalConfirm.addEventListener('click', () => {
+    if (!moduleRemovalSelectedId) {
+      return;
+    }
+    closeModuleRemovalDialog(moduleRemovalSelectedId);
+  });
+}
+
+if (moduleRemovalCancel) {
+  moduleRemovalCancel.addEventListener('click', () => {
+    closeModuleRemovalDialog(null);
+  });
+}
+
+if (moduleRemovalBackdrop) {
+  moduleRemovalBackdrop.addEventListener('click', () => {
+    closeModuleRemovalDialog(null);
+  });
+}
+
+if (moduleRemovalRemoveAll) {
+  moduleRemovalRemoveAll.addEventListener('click', () => {
+    if (moduleRemovalRemoveAll.disabled) {
+      return;
+    }
+    closeModuleRemovalDialog(MODULE_REMOVAL_ALL);
+  });
 }
 
 const habitatForm = document.getElementById('habitatForm');
@@ -1819,6 +2953,8 @@ if (habitatForm) {
     await saveLayout();
     renderTable();
     renderMap();
+    pushStatus('Habitat shell updated. Modules will be re-optimized automatically.', { tone: 'info', timeout: 4800 });
+    scheduleAutoAnalysis('habitat-updated');
   });
 }
 
@@ -1840,6 +2976,8 @@ if (crewInput) {
     }
     updateCrewControls();
     await saveLayout();
+    pushStatus('Crew size updated. Auto-analysis queued.', { tone: 'info', timeout: 3600 });
+    scheduleAutoAnalysis('crew-updated');
   });
 }
 
@@ -1850,63 +2988,81 @@ if (missionPromptInput) {
       clearTimeout(saveLayoutTimer);
     }
     saveLayoutTimer = setTimeout(() => {
-      saveLayout();
+      saveLayout().then(() => {
+        pushStatus('Mission priorities updated. Auto-analysis queued.', { tone: 'info', timeout: 3600 });
+        scheduleAutoAnalysis('mission-prompt');
+      });
     }, 400);
   });
 }
 
-async function enforceRequirements() {
-  if (enforceRequirementsBtn) {
-    enforceRequirementsBtn.disabled = true;
+function queueCriticalModuleStaging(delay = 250) {
+  if (stageCriticalTimer) {
+    clearTimeout(stageCriticalTimer);
   }
-  try {
-    const res = await fetch('/requirements/enforce', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        layout: { habitat, modules, render_style: renderStyle },
-        crew: crewSize,
-        mission_prompt: missionPromptText,
-      }),
+  stageCriticalTimer = setTimeout(() => {
+    stageCriticalTimer = null;
+    stageCriticalModuleTemplates().catch((err) => {
+      console.error('Failed to stage critical module templates', err);
     });
-    if (!res.ok) {
-      throw new Error(`Enforce failed (${res.status})`);
-    }
-    const data = await res.json();
-    if (data.layout) {
-      const ensuredHabitat = ensureHabitatDefaults(data.layout.habitat || habitat);
-      habitat = ensuredHabitat;
-      cacheHabitatDimensions(habitat);
-      modules = Array.isArray(data.layout.modules)
-        ? data.layout.modules.map(normalizeModule).map((mod) => clampModuleToHabitat(mod, habitat))
-        : modules;
-      if (data.layout.render_style) {
-        renderStyle = String(data.layout.render_style).toLowerCase();
-      }
-      crewSize = Number.parseInt(data.layout.crew ?? crewSize, 10) || crewSize;
-      missionPromptText = String(data.layout.mission_prompt ?? missionPromptText);
-    }
-    updateRenderStyleControl();
-    updateCrewControls();
-    renderTable();
-    renderMap();
-    renderLibrary();
-    updateMetricsView(currentMetrics, data.requirements);
-    await saveLayout();
-    currentRequirements = data.requirements || currentRequirements;
-  } catch (err) {
-    console.error('Failed to enforce requirements', err);
-  } finally {
-    if (enforceRequirementsBtn) {
-      enforceRequirementsBtn.disabled = false;
-    }
-  }
+  }, Math.max(0, delay));
 }
 
-if (enforceRequirementsBtn) {
-  enforceRequirementsBtn.addEventListener('click', () => {
-    enforceRequirements();
-  });
+async function stageCriticalModuleTemplates({ silent = false } = {}) {
+  if (stageCriticalPromise) {
+    return stageCriticalPromise;
+  }
+
+  const payload = {
+    layout: { habitat, modules, render_style: renderStyle },
+    crew: crewSize,
+    mission_prompt: missionPromptText,
+    library_only: true,
+  };
+
+  stageCriticalPromise = (async () => {
+    try {
+      if (enforceRequirementsBtn) {
+        enforceRequirementsBtn.disabled = true;
+      }
+      const res = await fetch('/requirements/enforce', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        throw new Error(`Critical staging failed (${res.status})`);
+      }
+      const data = await res.json();
+      const templates = Array.isArray(data.library_templates)
+        ? data.library_templates
+        : Array.isArray(data.layout?.requirements_report?.library_templates)
+          ? data.layout.requirements_report.library_templates
+          : [];
+      const added = mergeLibraryEntries(templates);
+      if (data.requirements) {
+        currentRequirements = data.requirements;
+        updateMetricsView(currentMetrics, currentRequirements);
+      }
+      renderTable();
+      renderMap();
+      if (added.length && !silent) {
+        const labels = added.map((entry) => entry.label || entry.function || entry.asset);
+        console.info(`Critical modules staged in the library: ${labels.join(', ')}`);
+      }
+      return added;
+    } catch (err) {
+      console.error('Failed to fetch requirement templates', err);
+      throw err;
+    } finally {
+      stageCriticalPromise = null;
+      if (enforceRequirementsBtn) {
+        enforceRequirementsBtn.disabled = false;
+      }
+    }
+  })();
+
+  return stageCriticalPromise;
 }
 
 async function loadRequirementLibrary() {
@@ -1945,7 +3101,80 @@ async function loadRequirementLibrary() {
   }
 }
 
+async function ensureCriticalModules() {
+  if (enforceRequirementsBtn) {
+    enforceRequirementsBtn.disabled = true;
+  }
+  try {
+    const res = await fetch('/requirements/enforce', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        layout: { habitat, modules, render_style: renderStyle },
+        crew: crewSize,
+        mission_prompt: missionPromptText,
+        library_only: false,
+      }),
+    });
+    if (!res.ok) {
+      throw new Error(`Ensure critical failed (${res.status})`);
+    }
+    const data = await res.json();
+    if (data.layout) {
+      const ensuredHabitat = ensureHabitatDefaults(data.layout.habitat || habitat);
+      habitat = ensuredHabitat;
+      cacheHabitatDimensions(habitat);
+      modules = Array.isArray(data.layout.modules)
+        ? data.layout.modules.map(normalizeModule).map((mod) => clampModuleToHabitat(mod, habitat))
+        : modules;
+      if (data.layout.render_style) {
+        renderStyle = String(data.layout.render_style).toLowerCase();
+      }
+      crewSize = Number.parseInt(data.layout.crew ?? crewSize, 10) || crewSize;
+      missionPromptText = String(data.layout.mission_prompt ?? missionPromptText);
+      updateRenderStyleControl();
+      updateCrewControls();
+      renderHabitatForm();
+      renderLibrary();
+    }
+    renderTable();
+    renderMap();
+    updateMetricsView(currentMetrics, data.requirements);
+    currentRequirements = data.requirements || currentRequirements;
+
+    const templates = Array.isArray(data.library_templates)
+      ? data.library_templates
+      : Array.isArray(data.layout?.requirements_report?.library_templates)
+        ? data.layout.requirements_report.library_templates
+        : [];
+    mergeLibraryEntries(templates);
+    pushStatus('Critical coverage enforced. Auto optimization queued.', { tone: 'success', timeout: 4800 });
+    scheduleAutoAnalysis('requirements-enforced');
+  } catch (err) {
+    console.error('Failed to ensure critical modules', err);
+    pushStatus('Failed to enforce critical modules. Check the console for details.', { tone: 'danger', timeout: 6000 });
+  } finally {
+    if (enforceRequirementsBtn) {
+      enforceRequirementsBtn.disabled = false;
+    }
+  }
+}
+
 const assetPresetSelect = document.getElementById('assetPreset');
+const moduleLibrarySearchInput = document.getElementById('moduleLibrarySearch');
+if (moduleLibrarySearchInput) {
+  moduleLibrarySearchInput.addEventListener('input', (event) => {
+    moduleLibraryQuery = String(event.target.value || '');
+    renderLibrary();
+  });
+}
+
+if (enforceRequirementsBtn) {
+  enforceRequirementsBtn.addEventListener('click', () => {
+    ensureCriticalModules();
+  });
+}
+
 function populateAssetPreset() {
   if (!assetPresetSelect) {
     return;
@@ -2024,14 +3253,30 @@ if (renderStyleSelect) {
   renderStyleSelect.addEventListener('change', async (event) => {
     renderStyle = String(event.target.value || 'realistic').toLowerCase();
     updateRenderStyleControl();
-    await simulate();
+    try {
+      await simulate();
+    } catch (err) {
+      console.error('Simulation after style change failed', err);
+    }
+  });
+}
+
+const simulateButton = document.getElementById('simulateBtn');
+if (simulateButton) {
+  simulateButton.addEventListener('click', () => {
+    void simulate().catch((err) => {
+      console.error('Manual simulation failed', err);
+    });
   });
 }
 
 const optimizeButton = document.getElementById('optimizeLayoutBtn');
 if (optimizeButton) {
   optimizeButton.addEventListener('click', () => {
-    optimizeLayout();
+    void optimizeLayout().catch((err) => {
+      console.error('Manual optimization failed', err);
+      pushStatus('Optimization failed. Check the console for details.', { tone: 'danger', timeout: 6000 });
+    });
   });
 }
 
@@ -2071,6 +3316,9 @@ if (moduleForm) {
       delete normalized.asset;
     }
 
+    const isEditing = Boolean(editingModuleId);
+    let resultingId = normalized.id;
+
     if (editingModuleId) {
       const targetIndex = modules.findIndex((mod) => mod.id === editingModuleId);
       if (targetIndex !== -1) {
@@ -2080,10 +3328,12 @@ if (moduleForm) {
         const updated = { ...normalized, id: finalId };
         const clamped = clampModuleToHabitat(updated);
         modules[targetIndex] = clamped;
+        resultingId = clamped.id;
       } else {
         const finalId = ensureUniqueModuleId(normalized.id, null);
         const clamped = clampModuleToHabitat({ ...normalized, id: finalId });
         modules.push(clamped);
+        resultingId = clamped.id;
       }
     } else {
       const finalId = modules.some((mod) => mod.id === normalized.id)
@@ -2091,6 +3341,7 @@ if (moduleForm) {
         : normalized.id;
       const clamped = clampModuleToHabitat({ ...normalized, id: finalId });
       modules.push(clamped);
+      resultingId = clamped.id;
     }
 
     await saveLayout();
@@ -2101,6 +3352,8 @@ if (moduleForm) {
       assetPresetSelect.value = '';
     }
     resetModuleFormState();
+    pushStatus(`Module ${resultingId} ${isEditing ? 'updated' : 'added'} successfully.`, { tone: 'success', timeout: 3200 });
+    scheduleAutoAnalysis(isEditing ? 'module-updated' : 'module-added');
   });
 
   resetModuleFormState();
@@ -2172,13 +3425,21 @@ if (aiForm) {
       await saveLayout();
       renderTable();
       renderMap();
+      pushStatus(`${generated.length} AI-generated module${generated.length === 1 ? '' : 's'} added.`, { tone: 'success', timeout: 5000 });
+      scheduleAutoAnalysis('ai-generated');
     } catch (err) {
       console.error('Failed to generate modules', err);
+      pushStatus('AI module generation failed. Check the console for details.', { tone: 'danger', timeout: 6000 });
     }
   });
 }
 
-loadLayout();
+loadRequirementLibrary();
+loadLayout()
+  .then(() => stageCriticalModuleTemplates({ silent: true }))
+  .catch((err) => {
+    console.error('Failed to initialize layout or stage critical templates', err);
+  });
 
 // Expose simulate globally for the inline button handler
 window.simulate = simulate;

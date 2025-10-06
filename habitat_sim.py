@@ -11,7 +11,7 @@ loadPrcFileData("", "framebuffer-multisample 0")
 loadPrcFileData("", "multisamples 0")
 
 from direct.showbase.ShowBase import ShowBase
-from panda3d.core import (DirectionalLight, AmbientLight, NodePath, Vec4,
+from panda3d.core import (DirectionalLight, AmbientLight, NodePath, Vec4, Vec3,
                           LineSegs, PNMImage, Filename, TransparencyAttrib,
                           GeomVertexRewriter)
 
@@ -486,8 +486,14 @@ class HabitatRenderer(ShowBase):
         self.render.set_light(self.render.attachNewNode(alight))
 
         # Camera
-        self.cam.set_pos(10, -18, 9)
+        self._camera_dir = Vec3(10.0, -18.0, 9.0)
+        self._camera_dir.normalize()
+        self._default_camera_distance = 22.5
+        self.cam.set_pos(self._camera_dir * self._default_camera_distance)
         self.cam.look_at(0, 0, 0)
+        self.camLens.set_fov(55.0)
+        self.camLens.set_near(0.1)
+        self.camLens.set_far(600.0)
 
     def build_scene(self, layout: Dict[str, Any], render_style: str = "realistic") -> None:
         # Clear
@@ -530,6 +536,8 @@ class HabitatRenderer(ShowBase):
 
         axes = self._make_axes(half_x, half_y, half_z)
         axes.reparent_to(self.scene)
+
+        self._update_camera(half_x, half_y, half_z)
 
         style_key = str(render_style or "realistic").lower()
 
@@ -616,6 +624,40 @@ class HabitatRenderer(ShowBase):
         ls.draw_to(0.0, 0.0, extent_z)
 
         return NodePath(ls.create())
+
+    def _update_camera(self, half_x: float, half_y: float, half_z: float) -> None:
+        # Use the maximum reach of the habitat to determine a comfortable viewing distance.
+        radius_xy = math.sqrt(half_x ** 2 + half_y ** 2)
+        radius_xyz = math.sqrt(radius_xy ** 2 + half_z ** 2)
+        radius_xy = max(radius_xy, 1.0)
+        radius_xyz = max(radius_xyz, 1.0)
+
+        target_distance = max(self._default_camera_distance * 0.6, radius_xyz * 2.8)
+
+        pos = self._camera_dir * target_distance
+
+        min_height = max(half_z * 1.6, radius_xy * 0.9, 8.0)
+        if pos.get_z() < min_height:
+            height_scale = min_height / max(pos.get_z(), 0.1)
+            pos *= height_scale
+            target_distance *= height_scale
+
+        self.cam.set_pos(pos)
+        self.cam.look_at(0, 0, 0)
+
+        shell_span = max(radius_xyz * 2.0, radius_xy * 2.0)
+        if shell_span > 80.0:
+            fov = 72.0
+        elif shell_span > 50.0:
+            fov = 66.0
+        elif shell_span > 30.0:
+            fov = 60.0
+        else:
+            fov = 55.0
+        self.camLens.set_fov(fov)
+
+        self.camLens.set_near(0.1)
+        self.camLens.set_far(max(target_distance * 5.0, shell_span * 3.0, 500.0))
 
     def _make_sphere_wire(self, radius: float, segments: int = 48) -> NodePath:
         ls = LineSegs()

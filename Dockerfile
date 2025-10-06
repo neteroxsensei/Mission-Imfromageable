@@ -11,10 +11,10 @@ WORKDIR /app
 COPY requirements.txt ./
 RUN python -m pip install --upgrade pip && \
     python -m pip install -r requirements.txt && \
-    python -m pip install Flask gunicorn
+    python -m pip install Flask
 
 COPY . .
 
-ENV PORT=8080
+EXPOSE 5000
 
-CMD ["sh", "-c", "exec gunicorn --bind 0.0.0.0:${PORT:-8080} app:app"]
+CMD ["python", "app.py"]

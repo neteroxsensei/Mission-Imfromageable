@@ -1,3 +1,5 @@
-pydantic>=1.10,<2.0
+Flask>=2.3,<3.0
 numpy>=1.24,<2.0
+panda3d>=1.10,<1.11
+pydantic>=1.10,<2.0
 pytest>=7.4

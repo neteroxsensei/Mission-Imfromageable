@@ -1,12 +1,11 @@
 import csv
+import math
 import os
 import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from flask import Flask, jsonify, request, render_template, send_file
-
-import math
 from habitat_sim import HabitatRenderer, compute_metrics, enforce_module_bounds
 from lunar_layout.generator import generate_initial_layout
 from lunar_layout.constraints import validate_layout as ll_validate
@@ -27,6 +26,21 @@ _current_layout = {
     "crew": 4,
     "mission_prompt": "",
 }
+
+# Global module ID counter
+_module_id_counter = 1
+
+def _get_next_module_id():
+    """
+    Generate the next module ID starting from 1.
+    Ensures IDs are unique and within the range 1-9999.
+    """
+    global _module_id_counter
+    if _module_id_counter > 9999:
+        raise ValueError("Maximum module ID reached (9999).")
+    module_id = f"{_module_id_counter:04d}"  # Use 4-digit ID
+    _module_id_counter += 1
+    return module_id
 _renderer = None
 _renderer_lock = threading.Lock()
 
@@ -49,6 +63,7 @@ def _color_for_type(type_name: str) -> str:
     if not COLOR_KEYS:
         return "grey"
     return COLOR_KEYS[abs(hash(type_name)) % len(COLOR_KEYS)]
+
 
 # --- Requirements dataset ---------------------------------------------------
 
@@ -210,7 +225,7 @@ def _list_all_critical_functions() -> List[RequirementEntry]:
     critical = []
     seen: set[Tuple[str, str]] = set()
     for entry in REQUIREMENT_LOOKUP.values():
-        if entry.type_crit == 1 or entry.function_crit == 1:
+        if entry.function_crit == 1:
             key = (entry.canonical_type, entry.canonical_function)
             if key not in seen:
                 seen.add(key)
@@ -356,7 +371,7 @@ def _ensure_requirement_modules(designer_layout: Dict[str, Any], crew_size: int,
         width, depth, height = _approximate_dimensions(entry, crew_size)
         color_name = _color_for_type(entry.type_name)
         new_module = {
-            "id": _function_id(entry, modules),
+            "id": _get_next_module_id(),
             "type": entry.type_name,
             "kind": entry.type_name,
             "function": entry.function_name,
@@ -373,6 +388,9 @@ def _ensure_requirement_modules(designer_layout: Dict[str, Any], crew_size: int,
         added_modules.append(new_module)
         cursor_y += depth + 0.75
 
+    # Renumber all module IDs in the table, starting from '0001'
+    for idx, mod in enumerate(modules, start=1):
+        mod["id"] = f"{idx:04d}"
     designer_layout["modules"] = modules
     designer_layout.setdefault("requirements_report", {})
     designer_layout["requirements_report"]["added"] = [
@@ -454,6 +472,9 @@ def normalize_layout(layout):
         shape["radius"] = _coerce_float(habitat.get("radius"), 4.0)
         shape["length"] = _coerce_float(habitat.get("length"), 14.0)
 
+    # Ensure the habitat starts at (0, 0, 0) and aligns with the grid
+    shape["position"] = [0.0, 0.0, 0.0]
+
     norm = {
         "shape": shape,
         "modules": []
@@ -490,16 +511,11 @@ def normalize_layout(layout):
 
         requirement = _find_requirement(kind, function_name)
         if requirement:
-            width, depth, height = module_entry["size"]
-            if requirement.min_width:
-                width = max(width, requirement.min_width)
-            if requirement.min_depth:
-                depth = max(depth, requirement.min_depth)
-            if requirement.min_height:
-                height = max(height, requirement.min_height)
-            module_entry["size"] = [width, depth, height]
+            module_entry["requirement"] = requirement
+
         norm["modules"].append(module_entry)
-    return enforce_module_bounds(norm)
+
+    return norm
 
 
 def _build_reference_layouts():
@@ -629,7 +645,7 @@ def _layout_to_designer_payload(layout: LLLayout) -> Dict[str, Any]:
         x = (col - 1) * (width + spacing)
         y = row * (depth + spacing)
         modules.append({
-            "id": zone.name.lower(),
+            "id": _get_next_module_id(),
             "type": zone.name,
             "shape": "box",
             "x": round(x, 2),
@@ -648,6 +664,7 @@ def _layout_to_designer_payload(layout: LLLayout) -> Dict[str, Any]:
         "modules": modules,
     }
     return designer_layout
+
 
 @app.route("/")
 def index():
@@ -722,6 +739,7 @@ def enforce_requirements_route():
 
 @app.route("/requirements/library", methods=["GET"])
 def requirements_library():
+    global _library_id_counter
     seen: Dict[str, Dict[str, Any]] = {}
     for entry in BASE_CRITICAL_FUNCTIONS:
         module = _requirement_library_entry(entry)
@@ -828,7 +846,7 @@ def ai_modules():
             for i in range(count):
                 sx, sy, sz = template["size"]
                 modules.append({
-                    "id": f"{mtype}-{i+1}",
+                    "id": _get_next_module_id(),
                     "type": mtype,
                     "shape": template["shape"],
                     "x": (i % 4) * (sx + 0.5),   # auto-grid placement
@@ -1014,6 +1032,37 @@ def auto_export_layout():
     coverage = _compute_requirement_score(designer_layout["modules"], crew, mission_prompt)
     markdown = ll_export_markdown(layout, metrics, validation.messages)
     return jsonify({"markdown": markdown, "requirements": coverage})
+
+@app.route('/re-id-modules', methods=['POST'])
+def re_id_modules():
+    """
+    Reassign IDs to all modules in the current layout, starting from 1.
+    """
+    global _current_layout, _module_id_counter
+    _module_id_counter = 1  # Reset the ID counter
+
+    for index, module in enumerate(_current_layout['modules']):
+        module['id'] = f"{_get_next_module_id()}"
+
+    return jsonify({"status": "success", "message": "Modules re-IDed successfully."})
+
+@app.route('/add-module', methods=['POST'])
+def add_module():
+    """
+    Add a new module to the current layout and re-ID all modules automatically.
+    """
+    global _current_layout
+
+    # Parse the new module data from the request
+    new_module = request.json
+    new_module['id'] = _get_next_module_id()
+    _current_layout['modules'].append(new_module)
+
+    # Re-ID all modules
+    for idx, module in enumerate(_current_layout['modules'], start=1):
+        module['id'] = f"{idx:04d}"
+
+    return jsonify({"status": "success", "message": "Module added and IDs updated.", "module": new_module})
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=True, use_reloader=False)
