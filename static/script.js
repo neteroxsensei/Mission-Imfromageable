@@ -108,6 +108,9 @@ let renderStyle = 'realistic';
 let crewSize = 4;
 let missionPromptText = '';
 let saveLayoutTimer = null;
+let requirementCatalogMap = null;
+let requirementCatalogPromise = null;
+let requirementTypeIndex = null;
 
 const crewInput = document.getElementById('crewSize');
 const missionPromptInput = document.getElementById('missionPrompt');
@@ -1367,6 +1370,295 @@ function renderMetricsCharts(metrics, requirements) {
   });
 }
 
+function canonicalRequirementText(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+    .replace(/\s+/g, ' ');
+}
+
+function requirementKey(typeKey, functionKey) {
+  return `${typeKey}|${functionKey}`;
+}
+
+function parseFiniteNumber(value) {
+  const num = Number(value);
+  return Number.isFinite(num) ? num : null;
+}
+
+function firstFinite(...values) {
+  for (let i = 0; i < values.length; i += 1) {
+    const num = Number(values[i]);
+    if (Number.isFinite(num)) {
+      return num;
+    }
+  }
+  return null;
+}
+
+async function ensureRequirementCatalog() {
+  if (requirementCatalogMap && requirementTypeIndex) {
+    return { catalog: requirementCatalogMap, typeIndex: requirementTypeIndex };
+  }
+  if (!requirementCatalogPromise) {
+    requirementCatalogPromise = fetch('/requirements/catalog')
+      .then((res) => {
+        if (!res.ok) {
+          throw new Error(`Requirement catalog request failed (${res.status})`);
+        }
+        return res.json();
+      })
+      .then((data) => {
+        const catalog = new Map();
+        const typeIndex = new Map();
+        const entries = Array.isArray(data.requirements) ? data.requirements : [];
+        entries.forEach((item) => {
+          const canonicalType = canonicalRequirementText(item.canonicalType || item.type);
+          const canonicalFunction = canonicalRequirementText(item.canonicalFunction || item.function);
+          if (!canonicalType || !canonicalFunction) {
+            return;
+          }
+          const key = requirementKey(canonicalType, canonicalFunction);
+          const entry = {
+            type: item.type,
+            function: item.function,
+            canonicalType,
+            canonicalFunction,
+            minWidth: parseFiniteNumber(item.minWidth),
+            minDepth: parseFiniteNumber(item.minDepth),
+            minHeight: parseFiniteNumber(item.minHeight),
+            typeCriticality: parseFiniteNumber(item.typeCriticality),
+            functionCriticality: parseFiniteNumber(item.functionCriticality),
+            volume4: parseFiniteNumber(item.volume4),
+            volume6: parseFiniteNumber(item.volume6),
+            volumeDelta: parseFiniteNumber(item.volumeDelta),
+          };
+          catalog.set(key, entry);
+          if (!typeIndex.has(canonicalType)) {
+            typeIndex.set(canonicalType, new Set());
+          }
+          typeIndex.get(canonicalType).add(canonicalFunction);
+        });
+        requirementCatalogMap = catalog;
+        requirementTypeIndex = typeIndex;
+        return { catalog, typeIndex };
+      })
+      .catch((err) => {
+        console.error('Failed to load requirement catalog', err);
+        if (!requirementCatalogMap) {
+          requirementCatalogMap = new Map();
+        }
+        if (!requirementTypeIndex) {
+          requirementTypeIndex = new Map();
+        }
+        return { catalog: requirementCatalogMap, typeIndex: requirementTypeIndex };
+      });
+  }
+  return requirementCatalogPromise;
+}
+
+function lookupRequirementForModule(module) {
+  if (!requirementCatalogMap || !requirementTypeIndex) {
+    return null;
+  }
+  const typeCandidate = canonicalRequirementText(module.type || module.kind || '');
+  const functionCandidate = canonicalRequirementText(
+    module.function || module.functionality || module.id || '',
+  );
+  if (typeCandidate && functionCandidate) {
+    const directKey = requirementKey(typeCandidate, functionCandidate);
+    if (requirementCatalogMap.has(directKey)) {
+      return requirementCatalogMap.get(directKey);
+    }
+  }
+  if (typeCandidate && requirementTypeIndex.has(typeCandidate)) {
+    const functions = requirementTypeIndex.get(typeCandidate);
+    if (functions.size === 1) {
+      const [onlyFunction] = Array.from(functions);
+      const key = requirementKey(typeCandidate, onlyFunction);
+      if (requirementCatalogMap.has(key)) {
+        return requirementCatalogMap.get(key);
+      }
+    }
+    const searchSpace = [
+      canonicalRequirementText(module.function),
+      canonicalRequirementText(module.id),
+      canonicalRequirementText(module.kind),
+      canonicalRequirementText(module.type),
+    ];
+    for (let i = 0; i < searchSpace.length; i += 1) {
+      const candidate = searchSpace[i];
+      if (candidate && functions.has(candidate)) {
+        const key = requirementKey(typeCandidate, candidate);
+        if (requirementCatalogMap.has(key)) {
+          return requirementCatalogMap.get(key);
+        }
+      }
+    }
+  }
+  return null;
+}
+
+function buildModuleInfoList(modulesList) {
+  return modulesList.map((mod) => {
+    const size = (mod.size && typeof mod.size === 'object') ? mod.size : {};
+    const requirement = lookupRequirementForModule(mod);
+    const rawWidth = firstFinite(mod.w, size.w, size.width);
+    const rawDepth = firstFinite(mod.d, size.d, size.depth);
+    const rawHeight = firstFinite(mod.h, size.h, size.height);
+    const minWidth = requirement?.minWidth ?? 0;
+    const minDepth = requirement?.minDepth ?? 0;
+    const minHeight = requirement?.minHeight ?? 0;
+    const width = Math.max(numberOr(rawWidth, 1), minWidth, 0.1);
+    const depth = Math.max(numberOr(rawDepth, 1), minDepth, 0.1);
+    const height = Math.max(numberOr(rawHeight, 1), minHeight, 0.1);
+    const functionCriticality = Number.isFinite(requirement?.functionCriticality)
+      ? requirement.functionCriticality
+      : null;
+    const typeCriticality = Number.isFinite(requirement?.typeCriticality)
+      ? requirement.typeCriticality
+      : null;
+    return {
+      id: mod.id,
+      module: mod,
+      type: mod.type || mod.kind || 'generic',
+      width,
+      depth,
+      height,
+      volume: width * depth * height,
+      requirement,
+      functionCriticality,
+      typeCriticality,
+    };
+  });
+}
+
+function createRemovalQueue(moduleInfos) {
+  const lowPriority = [];
+  const highPriority = [];
+  moduleInfos.forEach((info) => {
+    const fc = Number.isFinite(info.functionCriticality) ? info.functionCriticality : null;
+    const tc = Number.isFinite(info.typeCriticality) ? info.typeCriticality : null;
+    const preserve = (fc !== null && fc >= 1) || (fc === null && tc === 1);
+    if (preserve) {
+      highPriority.push(info);
+    } else {
+      lowPriority.push(info);
+    }
+  });
+  lowPriority.sort((a, b) => b.volume - a.volume);
+  highPriority.sort((a, b) => a.volume - b.volume);
+  return [...lowPriority, ...highPriority];
+}
+
+function attemptTypeClusterLayout(moduleInfos, footprint) {
+  const width = numberOr(footprint.width, 0);
+  const depth = numberOr(footprint.depth, 0);
+  if (!Number.isFinite(width) || !Number.isFinite(depth) || width <= 0 || depth <= 0) {
+    return { placements: new Map(), overflow: [...moduleInfos] };
+  }
+  const minX = -width / 2;
+  const maxX = width / 2;
+  const minY = -depth / 2;
+  const maxY = depth / 2;
+  const margin = Math.max(0.5, Math.min(width, depth) * 0.05);
+  const gap = Math.max(0.25, margin / 2);
+  const usableWidth = Math.max(width - (2 * margin), 0);
+  const usableDepth = Math.max(depth - (2 * margin), 0);
+  if (usableWidth <= 0 || usableDepth <= 0) {
+    return { placements: new Map(), overflow: [...moduleInfos] };
+  }
+
+  const typeGroups = new Map();
+  moduleInfos.forEach((info) => {
+    const typeKey = canonicalRequirementText(info.type || info.module.type || info.module.kind || 'generic') || 'generic';
+    if (!typeGroups.has(typeKey)) {
+      typeGroups.set(typeKey, []);
+    }
+    typeGroups.get(typeKey).push(info);
+  });
+
+  const groups = Array.from(typeGroups.values());
+  groups.sort((groupA, groupB) => {
+    const totalA = groupA.reduce((sum, item) => sum + item.volume, 0);
+    const totalB = groupB.reduce((sum, item) => sum + item.volume, 0);
+    return totalB - totalA;
+  });
+  groups.forEach((group) => {
+    group.sort((a, b) => (b.width * b.depth) - (a.width * a.depth));
+  });
+
+  const placements = new Map();
+  const overflowSet = new Set();
+  let groupStartY = minY + margin;
+
+  for (let gIndex = 0; gIndex < groups.length; gIndex += 1) {
+    const group = groups[gIndex];
+    let rowStartY = groupStartY;
+    let rowHeight = 0;
+    let xCursor = 0;
+    let groupBottom = groupStartY;
+
+    for (let i = 0; i < group.length; i += 1) {
+      const info = group[i];
+      const widthClamped = Math.max(Math.min(info.width, usableWidth), 0.1);
+      const depthClamped = Math.max(Math.min(info.depth, usableDepth), 0.1);
+      const height = Math.max(info.height, 0.1);
+
+      if (xCursor + widthClamped > usableWidth + 1e-6) {
+        xCursor = 0;
+        rowStartY += rowHeight + gap;
+        rowHeight = 0;
+      }
+
+      const centerY = rowStartY + (depthClamped / 2);
+      if (centerY + (depthClamped / 2) > maxY - margin + 1e-6) {
+        overflowSet.add(info.id);
+        continue;
+      }
+
+      const centerX = (minX + margin) + xCursor + (widthClamped / 2);
+      if (centerX + (widthClamped / 2) > maxX - margin + 1e-6) {
+        overflowSet.add(info.id);
+        continue;
+      }
+
+      placements.set(info.id, {
+        x: centerX,
+        y: centerY,
+        z: height / 2,
+        w: widthClamped,
+        d: depthClamped,
+        h: height,
+      });
+
+      xCursor += widthClamped + gap;
+      rowHeight = Math.max(rowHeight, depthClamped);
+      groupBottom = Math.max(groupBottom, centerY + (depthClamped / 2));
+    }
+
+    groupStartY = groupBottom + gap;
+    if (groupStartY > maxY - margin) {
+      for (let j = gIndex + 1; j < groups.length; j += 1) {
+        groups[j].forEach((info) => {
+          overflowSet.add(info.id);
+        });
+      }
+      break;
+    }
+  }
+
+  moduleInfos.forEach((info) => {
+    if (!placements.has(info.id)) {
+      overflowSet.add(info.id);
+    }
+  });
+
+  const overflow = moduleInfos.filter((info) => overflowSet.has(info.id));
+  return { placements, overflow };
+}
+
 async function optimizeLayout() {
   if (!modules.length) {
     window.alert('Add modules before optimizing the layout.');
@@ -1374,80 +1666,116 @@ async function optimizeLayout() {
   }
 
   const footprint = getHabitatFootprint();
-  if (!Number.isFinite(footprint.width) || !Number.isFinite(footprint.depth)) {
+  if (
+    !Number.isFinite(footprint.width)
+    || !Number.isFinite(footprint.depth)
+    || footprint.width <= 0
+    || footprint.depth <= 0
+  ) {
     window.alert('Cannot determine habitat footprint.');
     return;
   }
 
-  const sorted = modules.map((mod) => ({ ...mod }));
-  sorted.sort((a, b) => {
-    const aDims = moduleDimensions(a);
-    const bDims = moduleDimensions(b);
-    return (bDims.width * bDims.depth) - (aDims.width * aDims.depth);
-  });
+  await ensureRequirementCatalog();
 
-  const step = computePlacementStep(sorted);
-  const minX = -footprint.width / 2;
-  const maxX = footprint.width / 2;
-  const minY = -footprint.depth / 2;
-  const maxY = footprint.depth / 2;
+  const moduleInfos = buildModuleInfoList(modules);
+  if (!moduleInfos.length) {
+    window.alert('No modules available for optimization.');
+    return;
+  }
 
-  const placed = [];
-  const updatedMap = new Map();
-  const unplaced = [];
+  let workingInfos = moduleInfos.slice();
+  const removalQueue = createRemovalQueue(moduleInfos.slice());
+  let layoutResult = attemptTypeClusterLayout(workingInfos, footprint);
+  const removedMap = new Map();
 
-  sorted.forEach((mod) => {
-    const dims = moduleDimensions(mod);
-    const halfW = dims.width / 2;
-    const halfD = dims.depth / 2;
-    let candidate = null;
+  while (layoutResult.overflow.length && removalQueue.length) {
+    const nextRemoval = removalQueue.shift();
+    if (!workingInfos.some((info) => info.id === nextRemoval.id)) {
+      continue;
+    }
+    removedMap.set(nextRemoval.id, nextRemoval);
+    workingInfos = workingInfos.filter((info) => info.id !== nextRemoval.id);
+    layoutResult = attemptTypeClusterLayout(workingInfos, footprint);
+  }
 
-    for (let y = minY + halfD; y <= maxY - halfD + 1e-6; y += step) {
-      let found = false;
-      for (let x = minX + halfW; x <= maxX - halfW + 1e-6; x += step) {
-        if (!fitsWithinFootprint(mod, x, y, footprint)) {
-          continue;
+  if (layoutResult.overflow.length) {
+    let overflowGuard = 0;
+    while (layoutResult.overflow.length) {
+      const overflowIds = new Set(layoutResult.overflow.map((info) => info.id));
+      layoutResult.overflow.forEach((info) => {
+        if (!removedMap.has(info.id)) {
+          removedMap.set(info.id, info);
         }
-        const overlaps = placed.some((other) => modulesOverlapRect({ ...mod, x, y }, other));
-        if (!overlaps) {
-          candidate = { ...mod, x, y };
-          placed.push({ ...candidate });
-          updatedMap.set(mod.id, candidate);
-          found = true;
-          break;
-        }
+      });
+      const nextInfos = workingInfos.filter((info) => !overflowIds.has(info.id));
+      if (nextInfos.length === workingInfos.length) {
+        break;
       }
-      if (found) {
+      workingInfos = nextInfos;
+      layoutResult = attemptTypeClusterLayout(workingInfos, footprint);
+      overflowGuard += 1;
+      if (overflowGuard > moduleInfos.length) {
         break;
       }
     }
+  }
 
-    if (!candidate) {
-      unplaced.push(mod.id);
-      placed.push({ ...mod });
+  const keptIds = new Set(workingInfos.map((info) => info.id));
+  const placements = layoutResult.placements;
+  modules = modules.filter((mod) => keptIds.has(mod.id));
+
+  modules = modules.map((mod) => {
+    const placement = placements.get(mod.id);
+    if (!placement) {
+      return mod;
     }
+    const updated = {
+      ...mod,
+      x: placement.x,
+      y: placement.y,
+      z: placement.z,
+      w: placement.w,
+      d: placement.d,
+      h: placement.h,
+    };
+    return clampModuleToHabitat(updated);
   });
 
-  modules = modules.map((original) => updatedMap.get(original.id) || original);
-  modules = modules.map((mod) => clampModuleToHabitat(mod));
   await saveLayout();
   renderTable();
   renderMap();
 
   const overlaps = findOverlaps(modules);
+  const removedList = Array.from(removedMap.values());
+  const criticalRemoved = removedList.filter((info) => {
+    const fc = Number.isFinite(info.functionCriticality) ? info.functionCriticality : null;
+    const tc = Number.isFinite(info.typeCriticality) ? info.typeCriticality : null;
+    return (fc !== null && fc >= 1) || (fc === null && tc === 1);
+  });
 
-  if (unplaced.length || overlaps.length) {
-    const messages = [];
-    if (unplaced.length) {
-      messages.push(`Unable to reposition without overlap: ${unplaced.join(', ')}`);
-    }
-    if (overlaps.length) {
-      const pairs = overlaps.map(([a, b]) => `${a} ↔ ${b}`);
-      messages.push(`Overlapping modules detected: ${pairs.join(', ')}`);
-    }
-    window.alert(`${messages.join('\n')}\nPlease adjust the listed modules manually.`);
+  const messages = [];
+  if (overlaps.length) {
+    const pairs = overlaps.map(([a, b]) => `${a} ↔ ${b}`);
+    messages.push(`Overlapping modules detected: ${pairs.join(', ')}`);
+  }
+  if (removedList.length) {
+    const removedText = removedList
+      .map((info) => `${info.id} (${info.module.function || info.module.type || 'module'})`)
+      .join(', ');
+    messages.push(`Removed modules that could not fit: ${removedText}`);
+  }
+  if (criticalRemoved.length) {
+    const criticalText = criticalRemoved
+      .map((info) => `${info.id} (${info.module.function || info.module.type || 'module'})`)
+      .join(', ');
+    messages.push(`⚠️ Critical modules removed: ${criticalText}`);
+  }
+
+  if (messages.length) {
+    window.alert(messages.join('\n'));
   } else {
-    window.alert('Layout optimized. All modules placed without overlap.');
+    window.alert('Layout optimized by grouping modules by type within habitat constraints.');
   }
 }
 

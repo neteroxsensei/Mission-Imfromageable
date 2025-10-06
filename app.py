@@ -730,6 +730,29 @@ def requirements_library():
     modules = sorted(seen.values(), key=lambda m: (m["type"].lower(), m["label"].lower()))
     return jsonify({"modules": modules})
 
+
+@app.route("/requirements/catalog", methods=["GET"])
+def requirements_catalog():
+    entries: List[Dict[str, Any]] = []
+    for entry in REQUIREMENT_LOOKUP.values():
+        entries.append(
+            {
+                "type": entry.type_name,
+                "function": entry.function_name,
+                "canonicalType": entry.canonical_type,
+                "canonicalFunction": entry.canonical_function,
+                "minWidth": entry.min_width,
+                "minDepth": entry.min_depth,
+                "minHeight": entry.min_height,
+                "typeCriticality": entry.type_crit,
+                "functionCriticality": entry.function_crit,
+                "volume4": entry.volume_4,
+                "volume6": entry.volume_6,
+                "volumeDelta": entry.volume_delta,
+            }
+        )
+    return jsonify({"requirements": entries})
+
 @app.route("/simulate", methods=["GET"])
 def simulate():
     global _renderer
